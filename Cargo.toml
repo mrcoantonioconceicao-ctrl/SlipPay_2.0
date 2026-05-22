@@ -4,26 +4,40 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Integração com Solana
-solana-client = "1.18.17"
-solana-sdk = "1.18.17"
+# Segurança
+ed25519-dalek = "1.0"
+rand = "0.7"
+sha2 = "0.10"
+aes-gcm = "0.10"
 
-# Precisão financeira
+# Blockchain Solana
+solana-client = "1.18.26"
+solana-sdk = "1.18.26"
+
+# Banco de dados / PostgreSQL / auditoria
+sqlx = { version = "0.6", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "decimal"
+] }
+
 rust_decimal = "1.33.0"
+rust_decimal_macros = "1.33.0"
 
-# Criptografia pós-quântica
-pqcrypto = "0.7.2"
+# Tempo / datas
+chrono = { version = "0.4", features = ["serde"] }
 
-# Runtime assíncrono
-tokio = { version = "1.37", features = ["full"] }
+# API REST
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
 
-# Serialização e JSON
+# Serialização
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Banco de dados (opcional, para logs/auditoria)
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
 
-# Segurança e qualidade
-clippy = "0.1.62"
-cargo-audit = "0.18.0"
+# Erros e utilitários
+anyhow = "1.0"
