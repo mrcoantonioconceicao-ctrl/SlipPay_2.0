@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use crate::ai;
+use crate::finance;
 use crate::governance::{self, Payment};
 use crate::security;
 use crate::services;
@@ -53,6 +54,8 @@ pub struct CheckoutResponse {
     pub token: String,
     pub network: String,
     pub amount: Decimal,
+    pub taxa_slippay: Decimal,
+    pub valor_merchant: Decimal,
     pub memo: String,
     pub expires_at: String,
     pub status: String,
@@ -66,15 +69,12 @@ pub struct ConfirmResponse {
     pub confirmacoes: u64,
 }
 
-/// Extrai e valida API Key do header
 fn autenticar(headers: &HeaderMap) -> bool {
     match headers.get("X-Api-Key") {
-        Some(value) => {
-            match value.to_str() {
-                Ok(key) => security::validar_api_key(key),
-                Err(_) => false,
-            }
-        }
+        Some(value) => match value.to_str() {
+            Ok(key) => security::validar_api_key(key),
+            Err(_) => false,
+        },
         None => false,
     }
 }
@@ -139,6 +139,9 @@ async fn checkout(
     let memo = Uuid::new_v4().to_string();
     let expires_at = Utc::now() + Duration::minutes(15);
 
+    // Calcula breakdown com taxa 1.5%
+    let breakdown = finance::calcular_breakdown(payload.amount);
+
     let payment = Payment {
         payment_id: payment_id.clone(),
         merchant_id: payload.merchant_id.clone(),
@@ -160,7 +163,9 @@ async fn checkout(
         wallet_destino: payload.wallet_destino,
         token: payload.token,
         network: payload.network,
-        amount: payload.amount,
+        amount: breakdown.valor_original,
+        taxa_slippay: breakdown.taxa_slippay,
+        valor_merchant: breakdown.valor_merchant,
         memo,
         expires_at: expires_at.to_rfc3339(),
         status: "pending".to_string(),
