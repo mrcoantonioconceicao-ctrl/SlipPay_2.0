@@ -1,0 +1,27 @@
+{
+  "name": "@slippay/sdk-js",
+  "version": "1.0.0",
+  "description": "SlipPay SDK - Non-custodial USDC payment gateway for Brazilian e-commerce",
+  "main": "slippay.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "slippay",
+    "usdc",
+    "solana",
+    "stellar",
+    "payments",
+    "gateway",
+    "brasil",
+    "pix"
+  ],
+  "author": "SlipPay Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mrcoantonioconceicao-ctrl/SlipPay_2.0.git"
+  },
+  "homepage": "https://slippay.io"
+}y
+
