@@ -18,14 +18,13 @@ pub struct Payment {
     pub wallet_destino: String,
     pub token: String,
     pub network: String,
-    pub amount: f64,
+    pub amount: Decimal,
     pub memo: String,
     pub expires_at: DateTime<Utc>,
     pub status: String,
     pub created_at: DateTime<Utc>,
 }
 
-/// Conecta no PostgreSQL
 pub async fn conectar_db(url: &str) -> Pool<Postgres> {
     PgPoolOptions::new()
         .max_connections(5)
@@ -34,9 +33,6 @@ pub async fn conectar_db(url: &str) -> Pool<Postgres> {
         .expect("Erro ao conectar ao banco")
 }
 
-/// =========================
-/// AUDITORIA
-/// =========================
 pub async fn criar_tabela(pool: &Pool<Postgres>) {
     sqlx::query(
         r#"
@@ -61,11 +57,7 @@ pub async fn registrar_transacao(
     sqlx::query(
         r#"
         INSERT INTO auditoria (
-            id,
-            conta_origem,
-            conta_destino,
-            valor,
-            timestamp
+            id, conta_origem, conta_destino, valor, timestamp
         )
         VALUES ($1, $2, $3, $4, $5)
         "#
@@ -80,12 +72,7 @@ pub async fn registrar_transacao(
     .expect("Erro ao registrar auditoria");
 }
 
-/// =========================
-/// PAYMENTS
-/// =========================
-pub async fn criar_tabela_payments(
-    pool: &Pool<Postgres>,
-) {
+pub async fn criar_tabela_payments(pool: &Pool<Postgres>) {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS payments (
@@ -94,7 +81,7 @@ pub async fn criar_tabela_payments(
             wallet_destino TEXT NOT NULL,
             token TEXT NOT NULL,
             network TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL,
+            amount NUMERIC NOT NULL,
             memo TEXT NOT NULL,
             expires_at TIMESTAMPTZ NOT NULL,
             status TEXT NOT NULL,
@@ -114,16 +101,9 @@ pub async fn salvar_payment(
     sqlx::query(
         r#"
         INSERT INTO payments (
-            payment_id,
-            merchant_id,
-            wallet_destino,
-            token,
-            network,
-            amount,
-            memo,
-            expires_at,
-            status,
-            created_at
+            payment_id, merchant_id, wallet_destino,
+            token, network, amount, memo,
+            expires_at, status, created_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         "#
@@ -148,11 +128,7 @@ pub async fn buscar_payment(
     id: &str,
 ) -> Option<Payment> {
     let row = sqlx::query(
-        r#"
-        SELECT *
-        FROM payments
-        WHERE payment_id = $1
-        "#
+        r#"SELECT * FROM payments WHERE payment_id = $1"#
     )
     .bind(id)
     .fetch_optional(pool)
@@ -179,11 +155,7 @@ pub async fn atualizar_status_payment(
     status: &str,
 ) {
     sqlx::query(
-        r#"
-        UPDATE payments
-        SET status = $1
-        WHERE payment_id = $2
-        "#
+        r#"UPDATE payments SET status = $1 WHERE payment_id = $2"#
     )
     .bind(status)
     .bind(id)
