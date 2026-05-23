@@ -5,6 +5,7 @@ mod ai;
 mod interface;
 mod governance;
 mod ast;
+mod pix;
 
 #[tokio::main]
 async fn main() {

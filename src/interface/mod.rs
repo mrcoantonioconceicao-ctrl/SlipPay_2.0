@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::ai;
 use crate::finance;
 use crate::governance::{self, Payment};
+use crate::pix;
 use crate::security;
 use crate::services;
 
@@ -44,6 +45,15 @@ pub struct ConfirmRequest {
     pub payer: String,
     pub amount: Decimal,
     pub memo: String,
+}
+
+#[derive(Deserialize)]
+pub struct PixRequest {
+    pub payment_id: String,
+    pub merchant_id: String,
+    pub chave_pix: String,
+    pub valor_usdc: Decimal,
+    pub taxa_cambio: Decimal,
 }
 
 #[derive(Serialize)]
@@ -139,7 +149,6 @@ async fn checkout(
     let memo = Uuid::new_v4().to_string();
     let expires_at = Utc::now() + Duration::minutes(15);
 
-    // Calcula breakdown com taxa 1.5%
     let breakdown = finance::calcular_breakdown(payload.amount);
 
     let payment = Payment {
@@ -282,6 +291,35 @@ async fn get_payment(
     }
 }
 
+async fn pix_offramp(
+    headers: HeaderMap,
+    Json(payload): Json<PixRequest>,
+) -> impl IntoResponse {
+    if !autenticar(&headers) {
+        return Json(serde_json::json!({
+            "error": "API Key inválida ou ausente"
+        }));
+    }
+
+    let pedido = pix::criar_pedido_pix(
+        &payload.payment_id,
+        &payload.merchant_id,
+        &payload.chave_pix,
+        payload.valor_usdc,
+        payload.taxa_cambio,
+    );
+
+    let resultado = pix::enviar_para_vasp(&pedido).await;
+
+    Json(serde_json::json!({
+        "sucesso": resultado.sucesso,
+        "pedido_id": resultado.pedido_id,
+        "valor_brl": resultado.valor_brl,
+        "valor_liquido_brl": resultado.valor_liquido_brl,
+        "mensagem": resultado.mensagem,
+    }))
+}
+
 pub async fn iniciar_servidor(pool: Pool<Postgres>) {
     let app = Router::new()
         .route("/", get(home))
@@ -291,6 +329,7 @@ pub async fn iniciar_servidor(pool: Pool<Postgres>) {
         .route("/checkout", post(checkout))
         .route("/webhook/confirm", post(webhook_confirm))
         .route("/payment/:id", get(get_payment))
+        .route("/pix/offramp", post(pix_offramp))
         .with_state(pool);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
