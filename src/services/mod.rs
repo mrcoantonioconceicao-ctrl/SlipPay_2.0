@@ -1,14 +1,21 @@
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk::signature::{Keypair, Signature, Signer};
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use spl_token::instruction::transfer_checked;
 use spl_associated_token_account::get_associated_token_address;
+use std::str::FromStr;
 
 /// USDC Devnet mint address
 pub const USDC_MINT_DEVNET: &str =
     "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+
+pub struct VerificacaoTx {
+    pub valida: bool,
+    pub confirmacoes: u64,
+    pub erro: Option<String>,
+}
 
 /// Inicializa cliente RPC da Solana
 pub fn inicializar_cliente(url: &str) -> RpcClient {
@@ -33,6 +40,53 @@ pub fn consultar_saldo_usdc(
     match cliente.get_token_account_balance(&ata) {
         Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
         Err(_) => 0,
+    }
+}
+
+/// Verifica se uma transação on-chain é válida
+pub fn verificar_transacao(
+    cliente: &RpcClient,
+    tx_hash: &str,
+) -> VerificacaoTx {
+    let assinatura = match Signature::from_str(tx_hash) {
+        Ok(sig) => sig,
+        Err(_) => {
+            return VerificacaoTx {
+                valida: false,
+                confirmacoes: 0,
+                erro: Some("tx_hash inválido".to_string()),
+            }
+        }
+    };
+
+    match cliente.get_transaction(
+        &assinatura,
+        solana_transaction_status::UiTransactionEncoding::Json,
+    ) {
+        Ok(tx) => {
+            let confirmacoes = tx.slot;
+            let sucesso = tx
+                .transaction
+                .meta
+                .as_ref()
+                .and_then(|m| Some(m.err.is_none()))
+                .unwrap_or(false);
+
+            VerificacaoTx {
+                valida: sucesso,
+                confirmacoes,
+                erro: if sucesso {
+                    None
+                } else {
+                    Some("transação falhou on-chain".to_string())
+                },
+            }
+        }
+        Err(e) => VerificacaoTx {
+            valida: false,
+            confirmacoes: 0,
+            erro: Some(format!("Erro ao buscar tx: {}", e)),
+        },
     }
 }
 
@@ -67,9 +121,7 @@ pub fn enviar_transacao(
     assinatura.to_string()
 }
 
-/// Envia USDC via SPL Token (transferência atômica)
-/// valor em unidades mínimas (6 decimais para USDC)
-/// Ex: 1 USDC = 1_000_000
+/// Envia USDC via SPL Token
 pub fn enviar_usdc(
     cliente: &RpcClient,
     remetente: &Keypair,
@@ -97,7 +149,7 @@ pub fn enviar_usdc(
         &remetente.pubkey(),
         &[],
         valor,
-        6, // USDC tem 6 decimais
+        6,
     )
     .expect("Erro ao criar instrução USDC");
 
@@ -122,7 +174,6 @@ pub fn enviar_usdc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_consultar_saldo() {
@@ -137,14 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn test_consultar_saldo_usdc() {
+    fn test_tx_hash_invalido() {
         let cliente = inicializar_cliente(
             "https://api.devnet.solana.com"
         );
-        let conta = Pubkey::from_str(
-            "11111111111111111111111111111111"
-        ).unwrap();
-        let saldo = consultar_saldo_usdc(&cliente, &conta);
-        assert!(saldo >= 0);
+        let resultado = verificar_transacao(&cliente, "hash_invalido");
+        assert!(!resultado.valida);
     }
 }

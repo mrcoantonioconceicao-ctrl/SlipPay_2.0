@@ -61,6 +61,7 @@ pub struct ConfirmResponse {
     pub status: String,
     pub risk_score: u8,
     pub tx_hash: String,
+    pub confirmacoes: u64,
 }
 
 async fn home() -> impl IntoResponse {
@@ -84,7 +85,6 @@ async fn saldo(
     );
 
     let saldo = services::consultar_saldo(&cliente, &pubkey);
-
     saldo.to_string()
 }
 
@@ -135,6 +135,7 @@ async fn webhook_confirm(
     State(pool): State<AppState>,
     Json(payload): Json<ConfirmRequest>,
 ) -> impl IntoResponse {
+    // 1. Busca payment no banco
     let payment = match governance::buscar_payment(
         &pool,
         &payload.payment_id,
@@ -149,24 +150,47 @@ async fn webhook_confirm(
         }
     };
 
+    // 2. Valida memo
     if payment.memo != payload.memo {
         return Json(serde_json::json!({
             "error": "memo inválido"
         }));
     }
 
+    // 3. Valida valor
     if payment.amount != payload.amount {
         return Json(serde_json::json!({
             "error": "valor divergente"
         }));
     }
 
+    // 4. Valida expiração
     if Utc::now() > payment.expires_at {
         return Json(serde_json::json!({
             "error": "pagamento expirado"
         }));
     }
 
+    // 5. Verifica tx_hash on-chain na Solana
+    let cliente = services::inicializar_cliente(
+        "https://api.devnet.solana.com"
+    );
+
+    let verificacao = services::verificar_transacao(
+        &cliente,
+        &payload.tx_hash,
+    );
+
+    if !verificacao.valida {
+        return Json(serde_json::json!({
+            "error": format!(
+                "transação inválida on-chain: {}",
+                verificacao.erro.unwrap_or_default()
+            )
+        }));
+    }
+
+    // 6. Antifraude
     let limite = Decimal::from(10000);
     let risco = if payload.amount > limite { 90u8 } else { 10u8 };
 
@@ -176,6 +200,7 @@ async fn webhook_confirm(
         }));
     }
 
+    // 7. Atualiza status para paid
     governance::atualizar_status_payment(
         &pool,
         &payload.payment_id,
@@ -187,6 +212,7 @@ async fn webhook_confirm(
         status: "paid".to_string(),
         risk_score: risco,
         tx_hash: payload.tx_hash,
+        confirmacoes: verificacao.confirmacoes,
     }))
 }
 
