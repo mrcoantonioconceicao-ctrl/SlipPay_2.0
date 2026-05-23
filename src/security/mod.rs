@@ -1,7 +1,6 @@
 use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
-
 use aes_gcm::{
     aead::Aead,
     Aes256Gcm,
@@ -23,18 +22,14 @@ pub fn assinar_mensagem(
     chave_privada: &SecretKey,
 ) -> Signature {
     let secret_bytes = chave_privada.to_bytes();
-
     let public_key = PublicKey::from(chave_privada);
-
     let keypair_bytes = [
         secret_bytes.as_ref(),
         public_key.as_bytes(),
     ]
     .concat();
-
     let keypair = Keypair::from_bytes(&keypair_bytes)
         .expect("Erro ao reconstruir Keypair");
-
     keypair.sign(mensagem)
 }
 
@@ -44,9 +39,7 @@ pub fn verificar_mensagem(
     assinatura: &Signature,
     chave_publica: &PublicKey,
 ) -> bool {
-    chave_publica
-        .verify(mensagem, assinatura)
-        .is_ok()
+    chave_publica.verify(mensagem, assinatura).is_ok()
 }
 
 /// Gera SHA-256
@@ -64,12 +57,8 @@ pub fn criptografar(
 ) -> Vec<u8> {
     let key = Key::<Aes256Gcm>::from_slice(chave);
     let cipher = Aes256Gcm::new(key);
-
     let nonce = Nonce::from_slice(nonce);
-
-    cipher
-        .encrypt(nonce, dados)
-        .expect("Erro ao criptografar")
+    cipher.encrypt(nonce, dados).expect("Erro ao criptografar")
 }
 
 /// AES-256-GCM decrypt
@@ -80,12 +69,25 @@ pub fn descriptografar(
 ) -> Vec<u8> {
     let key = Key::<Aes256Gcm>::from_slice(chave);
     let cipher = Aes256Gcm::new(key);
-
     let nonce = Nonce::from_slice(nonce);
+    cipher.decrypt(nonce, dados).expect("Erro ao descriptografar")
+}
 
-    cipher
-        .decrypt(nonce, dados)
-        .expect("Erro ao descriptografar")
+/// Valida API Key recebida no header
+pub fn validar_api_key(api_key: &str) -> bool {
+    // API keys válidas — em produção viriam do banco de dados
+    let keys_validas = vec![
+        "slippay-dev-key-2026",
+        "slippay-merchant-key-001",
+    ];
+    keys_validas.contains(&api_key)
+}
+
+/// Gera uma API Key baseada em hash SHA-256
+pub fn gerar_api_key(merchant_id: &str, secret: &str) -> String {
+    let input = format!("{}:{}", merchant_id, secret);
+    let hash = gerar_hash(input.as_bytes());
+    hex::encode(&hash[..16])
 }
 
 #[cfg(test)]
@@ -95,28 +97,15 @@ mod tests {
     #[test]
     fn test_assinatura_valida() {
         let (pk, sk) = gerar_chaves();
-
-        let mensagem =
-            "SlipPay 2.0 - Segurança".as_bytes();
-
-        let assinatura =
-            assinar_mensagem(mensagem, &sk);
-
-        assert!(
-            verificar_mensagem(
-                mensagem,
-                &assinatura,
-                &pk
-            )
-        );
+        let mensagem = "SlipPay 2.0 - Segurança".as_bytes();
+        let assinatura = assinar_mensagem(mensagem, &sk);
+        assert!(verificar_mensagem(mensagem, &assinatura, &pk));
     }
 
     #[test]
     fn test_hash() {
         let mensagem = "Teste de hash".as_bytes();
-
         let hash = gerar_hash(mensagem);
-
         assert_eq!(hash.len(), 32);
     }
 
@@ -124,20 +113,19 @@ mod tests {
     fn test_criptografia_simetrica() {
         let chave: [u8; 32] = [0; 32];
         let nonce: [u8; 12] = [1; 12];
-
-        let dados =
-            "SlipPay dados sensíveis".as_bytes();
-
-        let criptografado =
-            criptografar(dados, &chave, &nonce);
-
-        let descriptografado =
-            descriptografar(
-                &criptografado,
-                &chave,
-                &nonce,
-            );
-
+        let dados = "SlipPay dados sensíveis".as_bytes();
+        let criptografado = criptografar(dados, &chave, &nonce);
+        let descriptografado = descriptografar(&criptografado, &chave, &nonce);
         assert_eq!(descriptografado, dados);
+    }
+
+    #[test]
+    fn test_api_key_valida() {
+        assert!(validar_api_key("slippay-dev-key-2026"));
+    }
+
+    #[test]
+    fn test_api_key_invalida() {
+        assert!(!validar_api_key("chave-falsa"));
     }
 }

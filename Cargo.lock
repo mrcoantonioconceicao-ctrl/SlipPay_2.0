@@ -3891,6 +3891,7 @@ dependencies = [
  "axum",
  "chrono",
  "ed25519-dalek",
+ "hex",
  "rand 0.7.3",
  "rust_decimal",
  "rust_decimal_macros",
