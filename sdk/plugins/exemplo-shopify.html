@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Loja Demo — SlipPay Checkout</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+    }
+
+    nav {
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 16px 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .nav-logo span { color: #a3e635; }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: #64748b;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 24px;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 48px;
+    }
+
+    @media (max-width: 768px) {
+      .container { grid-template-columns: 1fr; }
+      nav { padding: 16px 20px; }
+    }
+
+    /* PRODUTO */
+    .produto-img {
+      background: linear-gradient(135deg, #0d1226, #1a2744);
+      border-radius: 16px;
+      height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 80px;
+      margin-bottom: 24px;
+    }
+
+    .produto-nome {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .produto-preco {
+      font-size: 24px;
+      color: #a3e635;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+
+    .produto-desc {
+      color: #64748b;
+      font-size: 15px;
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+
+    .produto-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .tag {
+      background: #f1f5f9;
+      color: #475569;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    /* CHECKOUT CARD */
+    .checkout-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 28px;
+      height: fit-content;
+      position: sticky;
+      top: 24px;
+    }
+
+    .checkout-card h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+
+    .checkout-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      font-size: 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #64748b;
+    }
+
+    .checkout-row.total {
+      font-weight: 700;
+      color: #1e293b;
+      font-size: 16px;
+      border-bottom: none;
+      margin-top: 8px;
+    }
+
+    .divider { margin: 20px 0; border: none; border-top: 1px solid #e2e8f0; }
+
+    .payment-methods {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+
+    .btn-cartao {
+      width: 100%;
+      background: #1e293b;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+
+    .ou-divider {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 13px;
+      margin: 12px 0;
+      position: relative;
+    }
+
+    .ou-divider::before,
+    .ou-divider::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 42%;
+      height: 1px;
+      background: #e2e8f0;
+    }
+
+    .ou-divider::before { left: 0; }
+    .ou-divider::after { right: 0; }
+
+    .crypto-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #15803d;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .seguro-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">Loja<span>Demo</span></div>
+  <ul class="nav-links">
+    <li><a href="#">Início</a></li>
+    <li><a href="#">Produtos</a></li>
+    <li><a href="#">Contato</a></li>
+  </ul>
+</nav>
+
+<div class="container">
+
+  <!-- PRODUTO -->
+  <div>
+    <div class="produto-img">🎧</div>
+    <div class="produto-nome">Headphone Pro X1</div>
+    <div class="produto-preco">USDC 299.00</div>
+    <div class="produto-tags">
+      <span class="tag">Audio Premium</span>
+      <span class="tag">Bluetooth 5.3</span>
+      <span class="tag">ANC</span>
+      <span class="tag">40h bateria</span>
+    </div>
+    <div class="produto-desc">
+      Headphone profissional com cancelamento de ruído ativo,
+      driver de 40mm e bateria de 40 horas. Compatível com
+      todos os dispositivos. Som cristalino e graves profundos
+      para a melhor experiência de áudio.
+    </div>
+  </div>
+
+  <!-- CHECKOUT -->
+  <div>
+    <div class="checkout-card">
+      <h3>Resumo do Pedido</h3>
+
+      <div class="checkout-row">
+        <span>Headphone Pro X1</span>
+        <span>USDC 299.00</span>
+      </div>
+      <div class="checkout-row">
+        <span>Frete</span>
+        <span style="color:#15803d">Grátis</span>
+      </div>
+      <div class="checkout-row total">
+        <span>Total</span>
+        <span>USDC 299.00</span>
+      </div>
+
+      <hr class="divider">
+
+      <div class="payment-methods">Forma de pagamento</div>
+
+      <button class="btn-cartao">
+        💳 Pagar com Cartão
+      </button>
+
+      <div class="ou-divider">ou</div>
+
+      <div class="crypto-badge">
+        ⚡ Pagamento instantâneo sem taxas de cartão
+      </div>
+
+      <!-- BOTÃO SLIPPAY INJETADO AQUI -->
+      <div
+        data-slippay-checkout
+        data-slippay-valor="299"
+      ></div>
+
+      <div class="seguro-badge">
+        🔒 Pagamento seguro e não-custodial
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- SLIPPAY SDK -->
+<script src="./shopify.js"></script>
+<script>
+  SlipPay.init({
+    apiUrl: 'http://127.0.0.1:3000',
+    apiKey: 'slippay-dev-key-2026',
+    merchantId: 'merchant-001',
+    walletDestino: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    network: 'solana',
+    taxaCambio: 5.20,
+  });
+</script>
+
+</body>
+</html>
