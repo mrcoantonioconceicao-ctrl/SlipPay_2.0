@@ -46,3 +46,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Erros e utilitários
 anyhow = "1.0"
+
+# Variáveis de ambiente
+dotenvy = "0.15"

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -14,6 +14,7 @@ use std::{net::SocketAddr, str::FromStr};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
+use std::env;
 
 use crate::ai;
 use crate::finance;
@@ -81,13 +82,24 @@ pub struct ConfirmResponse {
 }
 
 fn autenticar(headers: &HeaderMap) -> bool {
+    let api_keys: Vec<String> = env::var("API_KEYS")
+        .unwrap_or_else(|_| "slippay-dev-key-2026".to_string())
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+
     match headers.get("X-Api-Key") {
         Some(value) => match value.to_str() {
-            Ok(key) => security::validar_api_key(key),
+            Ok(key) => api_keys.contains(&key.to_string()),
             Err(_) => false,
         },
         None => false,
     }
+}
+
+fn get_rpc_url() -> String {
+    env::var("SOLANA_RPC_URL")
+        .unwrap_or_else(|_| "https://api.devnet.solana.com".to_string())
 }
 
 async fn home() -> impl IntoResponse {
@@ -95,7 +107,12 @@ async fn home() -> impl IntoResponse {
 }
 
 async fn health() -> impl IntoResponse {
-    "ok"
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": "2.0",
+        "network": env::var("SOLANA_NETWORK")
+            .unwrap_or_else(|_| "devnet".to_string()),
+    }))
 }
 
 async fn saldo(
@@ -114,10 +131,7 @@ async fn saldo(
         Err(_) => return (StatusCode::BAD_REQUEST, "Conta inválida".to_string()),
     };
 
-    let cliente = services::inicializar_cliente(
-        "https://api.devnet.solana.com"
-    );
-
+    let cliente = services::inicializar_cliente(&get_rpc_url());
     let saldo = services::consultar_saldo(&cliente, &pubkey);
     (StatusCode::OK, saldo.to_string())
 }
@@ -225,9 +239,7 @@ async fn webhook_confirm(
         }));
     }
 
-    let cliente = services::inicializar_cliente(
-        "https://api.devnet.solana.com"
-    );
+    let cliente = services::inicializar_cliente(&get_rpc_url());
 
     let verificacao = services::verificar_transacao(
         &cliente,
@@ -321,7 +333,12 @@ async fn pix_offramp(
     }))
 }
 
-pub async fn iniciar_servidor(pool: Pool<Postgres>) {
+pub async fn iniciar_servidor(
+    pool: Pool<Postgres>,
+    host: String,
+    port: String,
+    _solana_rpc: String,
+) {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -339,10 +356,13 @@ pub async fn iniciar_servidor(pool: Pool<Postgres>) {
         .layer(cors)
         .with_state(pool);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .expect("Endereço inválido");
+
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    println!("Servidor rodando em http://{}", addr);
+    println!("✅ SlipPay 2.0 pronto!");
 
     axum::serve(listener, app).await.unwrap();
 }
