@@ -6,13 +6,13 @@ mod interface;
 mod governance;
 mod ast;
 mod pix;
+mod compliance;
 
 use dotenvy::dotenv;
 use std::env;
 
 #[tokio::main]
 async fn main() {
-    // Carrega variáveis do .env
     dotenv().ok();
 
     println!("🚀 SlipPay 2.0 iniciado...");
@@ -34,20 +34,16 @@ async fn main() {
     println!("📡 Rede: {}", env::var("SOLANA_NETWORK")
         .unwrap_or_else(|_| "devnet".to_string()));
     println!("🔗 RPC: {}", solana_rpc);
+    println!("⚖️  Compliance: BCB 519/520/521 ativo");
     println!("🗄️  Banco: conectando...");
 
-    // Conexão PostgreSQL
     let pool = governance::conectar_db(&database_url).await;
 
-    // Auditoria
     governance::criar_tabela(&pool).await;
-
-    // Payments
     governance::criar_tabela_payments(&pool).await;
 
     println!("🗄️  Banco: conectado ✓");
     println!("🌐 Servidor: http://{}:{}", host, port);
 
-    // Sobe API REST
     interface::iniciar_servidor(pool, host, port, solana_rpc).await;
 }
