@@ -3,6 +3,7 @@ use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use chrono::{Utc, DateTime};
 use uuid::Uuid;
+use std::env;
 
 /// Status de um pedido de off-ramp PIX
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,10 +38,50 @@ pub struct ResultadoPix {
     pub valor_brl: Decimal,
     pub valor_liquido_brl: Decimal,
     pub mensagem: String,
+    pub vasp_tx_id: Option<String>,
+    pub eta_segundos: Option<u32>,
+}
+
+/// Configuração do VASP
+#[derive(Debug, Clone)]
+pub struct ConfigVasp {
+    pub nome: String,
+    pub api_url: String,
+    pub api_key: String,
+    pub taxa: Decimal,
+    pub modo: ModoVasp,
+}
+
+#[derive(Debug, Clone)]
+pub enum ModoVasp {
+    Simulado,
+    Producao,
 }
 
 /// Taxa do VASP parceiro: 0.5%
 pub const TAXA_VASP: Decimal = dec!(0.5);
+
+/// Carrega configuração do VASP do .env
+pub fn carregar_config_vasp() -> ConfigVasp {
+    let modo = match env::var("VASP_MODO")
+        .unwrap_or_else(|_| "simulado".to_string())
+        .as_str()
+    {
+        "producao" => ModoVasp::Producao,
+        _ => ModoVasp::Simulado,
+    };
+
+    ConfigVasp {
+        nome: env::var("VASP_NOME")
+            .unwrap_or_else(|_| "SlipPay VASP Simulado".to_string()),
+        api_url: env::var("VASP_API_URL")
+            .unwrap_or_else(|_| "https://api.vasp.simulado.io".to_string()),
+        api_key: env::var("VASP_API_KEY")
+            .unwrap_or_else(|_| "vasp-key-simulado".to_string()),
+        taxa: TAXA_VASP,
+        modo,
+    }
+}
 
 /// Calcula o valor em BRL dado USDC e taxa de câmbio
 pub fn calcular_valor_brl(
@@ -82,17 +123,59 @@ pub fn criar_pedido_pix(
     }
 }
 
-/// Simula envio do pedido ao VASP parceiro. Em produção faria chamada HTTP ao VASP.
-pub async fn enviar_para_vasp(
-    pedido: &PedidoPix,
-) -> ResultadoPix {
-    if pedido.chave_pix.is_empty() {
+/// Valida chave PIX
+pub fn validar_chave_pix(chave: &str) -> (bool, &'static str) {
+    if chave.is_empty() {
+        return (false, "Chave PIX vazia");
+    }
+
+    // CPF: 11 dígitos
+    let apenas_numeros: String = chave.chars()
+        .filter(|c| c.is_numeric())
+        .collect();
+
+    if apenas_numeros.len() == 11 {
+        return (true, "cpf");
+    }
+
+    // CNPJ: 14 dígitos
+    if apenas_numeros.len() == 14 {
+        return (true, "cnpj");
+    }
+
+    // Telefone: começa com +55
+    if chave.starts_with("+55") && chave.len() >= 13 {
+        return (true, "telefone");
+    }
+
+    // Email
+    if chave.contains('@') && chave.contains('.') {
+        return (true, "email");
+    }
+
+    // Chave aleatória: 32 chars UUID
+    if chave.len() == 36 && chave.contains('-') {
+        return (true, "aleatoria");
+    }
+
+    (false, "formato inválido")
+}
+
+/// Envia pedido ao VASP
+pub async fn enviar_para_vasp(pedido: &PedidoPix) -> ResultadoPix {
+    let config = carregar_config_vasp();
+
+    // Valida chave PIX
+    let (pix_valido, tipo_chave) = validar_chave_pix(&pedido.chave_pix);
+    if !pix_valido {
         return ResultadoPix {
             sucesso: false,
             pedido_id: pedido.id.clone(),
             valor_brl: dec!(0),
             valor_liquido_brl: dec!(0),
-            mensagem: "Chave PIX inválida".to_string(),
+            mensagem: format!("Chave PIX inválida: {}", tipo_chave),
+            vasp_tx_id: None,
+            eta_segundos: None,
         };
     }
 
@@ -102,9 +185,37 @@ pub async fn enviar_para_vasp(
             pedido_id: pedido.id.clone(),
             valor_brl: dec!(0),
             valor_liquido_brl: dec!(0),
-            mensagem: "Valor inválido".to_string(),
+            mensagem: "Valor USDC inválido".to_string(),
+            vasp_tx_id: None,
+            eta_segundos: None,
         };
     }
+
+    // Limite mínimo: 1 USDC
+    if pedido.valor_usdc < dec!(1) {
+        return ResultadoPix {
+            sucesso: false,
+            pedido_id: pedido.id.clone(),
+            valor_brl: dec!(0),
+            valor_liquido_brl: dec!(0),
+            mensagem: "Valor mínimo é 1 USDC".to_string(),
+            vasp_tx_id: None,
+            eta_segundos: None,
+        };
+    }
+
+    match config.modo {
+        ModoVasp::Simulado => enviar_simulado(pedido, tipo_chave).await,
+        ModoVasp::Producao => enviar_producao(pedido, &config).await,
+    }
+}
+
+/// Modo simulado — para testes e desenvolvimento
+async fn enviar_simulado(
+    pedido: &PedidoPix,
+    tipo_chave: &str,
+) -> ResultadoPix {
+    let vasp_tx_id = format!("VASP-SIM-{}", &pedido.id[..8]);
 
     ResultadoPix {
         sucesso: true,
@@ -112,10 +223,44 @@ pub async fn enviar_para_vasp(
         valor_brl: pedido.valor_brl,
         valor_liquido_brl: pedido.valor_liquido_brl,
         mensagem: format!(
-            "PIX de R$ {:.2} enviado para {}",
+            "PIX simulado de R$ {:.2} enviado para {} ({}). TX: {}",
             pedido.valor_liquido_brl,
-            pedido.chave_pix
+            pedido.chave_pix,
+            tipo_chave,
+            vasp_tx_id,
         ),
+        vasp_tx_id: Some(vasp_tx_id),
+        eta_segundos: Some(30),
+    }
+}
+
+/// Modo produção — chamada HTTP real ao VASP
+async fn enviar_producao(
+    pedido: &PedidoPix,
+    config: &ConfigVasp,
+) -> ResultadoPix {
+    // Em produção faria chamada HTTP ao VASP parceiro
+    // Exemplo: Transfero, Bitso, Mercado Bitcoin
+    //
+    // let client = reqwest::Client::new();
+    // let res = client
+    //     .post(&format!("{}/v1/offramp", config.api_url))
+    //     .header("Authorization", &format!("Bearer {}", config.api_key))
+    //     .json(&payload)
+    //     .send()
+    //     .await;
+
+    ResultadoPix {
+        sucesso: false,
+        pedido_id: pedido.id.clone(),
+        valor_brl: dec!(0),
+        valor_liquido_brl: dec!(0),
+        mensagem: format!(
+            "VASP {} em produção — integração pendente",
+            config.nome
+        ),
+        vasp_tx_id: None,
+        eta_segundos: None,
     }
 }
 
@@ -143,12 +288,39 @@ mod tests {
         let pedido = criar_pedido_pix(
             "pay-001",
             "merchant-001",
-            "merchant@pix.com",
+            "merchant@email.com",
             dec!(100),
             dec!(5.20),
         );
         assert_eq!(pedido.valor_brl, dec!(520));
         assert_eq!(pedido.taxa_vasp, dec!(2.60));
         assert_eq!(pedido.valor_liquido_brl, dec!(517.40));
+    }
+
+    #[test]
+    fn test_validar_chave_pix_email() {
+        let (valido, tipo) = validar_chave_pix("merchant@email.com");
+        assert!(valido);
+        assert_eq!(tipo, "email");
+    }
+
+    #[test]
+    fn test_validar_chave_pix_cpf() {
+        let (valido, tipo) = validar_chave_pix("12345678901");
+        assert!(valido);
+        assert_eq!(tipo, "cpf");
+    }
+
+    #[test]
+    fn test_validar_chave_pix_invalida() {
+        let (valido, _) = validar_chave_pix("chave-invalida");
+        assert!(!valido);
+    }
+
+    #[test]
+    fn test_validar_chave_pix_telefone() {
+        let (valido, tipo) = validar_chave_pix("+5511999999999");
+        assert!(valido);
+        assert_eq!(tipo, "telefone");
     }
 }
