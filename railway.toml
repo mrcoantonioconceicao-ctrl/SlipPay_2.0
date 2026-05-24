@@ -1,0 +1,22 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "./slippay_2_0"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "slippay-api"
+
+[services.variables]
+HOST = "0.0.0.0"
+PORT = "3000"
+SOLANA_NETWORK = "devnet"
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
+SLIPPAY_TAXA = "1.5"
+SLIPPAY_TAXA_VASP = "0.5"
+TAXA_CAMBIO_DEFAULT = "5.20"

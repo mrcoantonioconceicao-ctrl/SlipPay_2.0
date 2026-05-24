@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://slippay:slippay123@db:5432/slippay
+      HOST: 0.0.0.0
+      PORT: 3000
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_NETWORK: devnet
+      SLIPPAY_TAXA: 1.5
+      SLIPPAY_TAXA_VASP: 0.5
+      TAXA_CAMBIO_DEFAULT: 5.20
+      API_KEYS: slippay-dev-key-2026,slippay-merchant-key-001
+      JWT_SECRET: slippay-secret-2026-mude-em-producao
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: slippay
+      POSTGRES_PASSWORD: slippay123
+      POSTGRES_DB: slippay
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slippay"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
