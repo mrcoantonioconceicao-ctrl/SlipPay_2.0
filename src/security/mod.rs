@@ -8,6 +8,7 @@ use aes_gcm::{
     KeyInit,
     Nonce,
 };
+use tracing::error;
 
 /// Gera um par de chaves Ed25519
 pub fn gerar_chaves() -> (PublicKey, SecretKey) {
@@ -17,10 +18,11 @@ pub fn gerar_chaves() -> (PublicKey, SecretKey) {
 }
 
 /// Assina uma mensagem com a chave privada
+/// Retorna Option em vez de panicar
 pub fn assinar_mensagem(
     mensagem: &[u8],
     chave_privada: &SecretKey,
-) -> Signature {
+) -> Option<Signature> {
     let secret_bytes = chave_privada.to_bytes();
     let public_key = PublicKey::from(chave_privada);
     let keypair_bytes = [
@@ -28,9 +30,14 @@ pub fn assinar_mensagem(
         public_key.as_bytes(),
     ]
     .concat();
-    let keypair = Keypair::from_bytes(&keypair_bytes)
-        .expect("Erro ao reconstruir Keypair");
-    keypair.sign(mensagem)
+
+    match Keypair::from_bytes(&keypair_bytes) {
+        Ok(keypair) => Some(keypair.sign(mensagem)),
+        Err(e) => {
+            error!("Erro ao reconstruir Keypair: {}", e);
+            None
+        }
+    }
 }
 
 /// Verifica assinatura
@@ -49,33 +56,42 @@ pub fn gerar_hash(mensagem: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-/// AES-256-GCM encrypt
+/// AES-256-GCM encrypt — retorna Result em vez de panicar
 pub fn criptografar(
     dados: &[u8],
     chave: &[u8; 32],
     nonce: &[u8; 12],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     let key = Key::<Aes256Gcm>::from_slice(chave);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(nonce);
-    cipher.encrypt(nonce, dados).expect("Erro ao criptografar")
+
+    cipher.encrypt(nonce, dados)
+        .map_err(|e| {
+            error!("Erro ao criptografar: {}", e);
+            format!("Erro ao criptografar: {}", e)
+        })
 }
 
-/// AES-256-GCM decrypt
+/// AES-256-GCM decrypt — retorna Result em vez de panicar
 pub fn descriptografar(
     dados: &[u8],
     chave: &[u8; 32],
     nonce: &[u8; 12],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     let key = Key::<Aes256Gcm>::from_slice(chave);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(nonce);
-    cipher.decrypt(nonce, dados).expect("Erro ao descriptografar")
+
+    cipher.decrypt(nonce, dados)
+        .map_err(|e| {
+            error!("Erro ao descriptografar: {}", e);
+            format!("Erro ao descriptografar: {}", e)
+        })
 }
 
 /// Valida API Key recebida no header
 pub fn validar_api_key(api_key: &str) -> bool {
-    // API keys válidas — em produção viriam do banco de dados
     let keys_validas = vec![
         "slippay-dev-key-2026",
         "slippay-merchant-key-001",
@@ -98,7 +114,8 @@ mod tests {
     fn test_assinatura_valida() {
         let (pk, sk) = gerar_chaves();
         let mensagem = "SlipPay 2.0 - Segurança".as_bytes();
-        let assinatura = assinar_mensagem(mensagem, &sk);
+        let assinatura = assinar_mensagem(mensagem, &sk)
+            .expect("Falha ao assinar");
         assert!(verificar_mensagem(mensagem, &assinatura, &pk));
     }
 
@@ -114,8 +131,10 @@ mod tests {
         let chave: [u8; 32] = [0; 32];
         let nonce: [u8; 12] = [1; 12];
         let dados = "SlipPay dados sensíveis".as_bytes();
-        let criptografado = criptografar(dados, &chave, &nonce);
-        let descriptografado = descriptografar(&criptografado, &chave, &nonce);
+        let criptografado = criptografar(dados, &chave, &nonce)
+            .expect("Falha ao criptografar");
+        let descriptografado = descriptografar(&criptografado, &chave, &nonce)
+            .expect("Falha ao descriptografar");
         assert_eq!(descriptografado, dados);
     }
 
