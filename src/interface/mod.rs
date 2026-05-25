@@ -13,6 +13,7 @@ use sqlx::{Pool, Postgres};
 use std::{net::SocketAddr, str::FromStr};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
+use tracing::{error, info};
 use uuid::Uuid;
 use std::env;
 
@@ -20,7 +21,6 @@ use crate::ai;
 use crate::finance;
 use crate::governance::{self, Payment};
 use crate::pix;
-use crate::security;
 use crate::services;
 
 type AppState = Pool<Postgres>;
@@ -102,6 +102,12 @@ fn get_rpc_url() -> String {
         .unwrap_or_else(|_| "https://api.devnet.solana.com".to_string())
 }
 
+fn erro_nao_autorizado() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "error": "API Key inválida ou ausente"
+    }))
+}
+
 async fn home() -> impl IntoResponse {
     "SlipPay API 2.0 rodando 🚀"
 }
@@ -163,7 +169,6 @@ async fn checkout(
     let payment_id = Uuid::new_v4().to_string();
     let memo = Uuid::new_v4().to_string();
     let expires_at = Utc::now() + Duration::minutes(15);
-
     let breakdown = finance::calcular_breakdown(payload.amount);
 
     let payment = Payment {
@@ -181,6 +186,8 @@ async fn checkout(
 
     governance::salvar_payment(&pool, payment).await;
 
+    info!("Checkout criado: {}", payment_id);
+
     Json(serde_json::json!(CheckoutResponse {
         payment_id,
         merchant_id: payload.merchant_id,
@@ -196,57 +203,59 @@ async fn checkout(
     }))
 }
 
+// Subfunções extraídas do webhook_confirm (Orion: reduzir função de 81 linhas)
+
+fn validar_payment(
+    payment: &governance::Payment,
+    payload: &ConfirmRequest,
+) -> Result<(), serde_json::Value> {
+    if payment.memo != payload.memo {
+        return Err(serde_json::json!({ "error": "memo inválido" }));
+    }
+    if payment.amount != payload.amount {
+        return Err(serde_json::json!({ "error": "valor divergente" }));
+    }
+    if Utc::now() > payment.expires_at {
+        return Err(serde_json::json!({ "error": "pagamento expirado" }));
+    }
+    Ok(())
+}
+
+fn verificar_risco(amount: Decimal) -> Result<u8, serde_json::Value> {
+    let limite = Decimal::from(10000);
+    let risco = if amount > limite { 90u8 } else { 10u8 };
+    if risco > 80 {
+        return Err(serde_json::json!({ "error": "suspeita de fraude" }));
+    }
+    Ok(risco)
+}
+
 async fn webhook_confirm(
     headers: HeaderMap,
     State(pool): State<AppState>,
     Json(payload): Json<ConfirmRequest>,
 ) -> impl IntoResponse {
     if !autenticar(&headers) {
-        return Json(serde_json::json!({
-            "error": "API Key inválida ou ausente"
-        }));
+        return Json(erro_nao_autorizado().0);
     }
 
-    let payment = match governance::buscar_payment(
-        &pool,
-        &payload.payment_id,
-    )
-    .await
-    {
+    // 1. Busca payment
+    let payment = match governance::buscar_payment(&pool, &payload.payment_id).await {
         Some(p) => p,
-        None => {
-            return Json(serde_json::json!({
-                "error": "payment_id inválido"
-            }))
-        }
+        None => return Json(serde_json::json!({ "error": "payment_id inválido" })),
     };
 
-    if payment.memo != payload.memo {
-        return Json(serde_json::json!({
-            "error": "memo inválido"
-        }));
+    // 2. Valida payment
+    if let Err(e) = validar_payment(&payment, &payload) {
+        return Json(e);
     }
 
-    if payment.amount != payload.amount {
-        return Json(serde_json::json!({
-            "error": "valor divergente"
-        }));
-    }
-
-    if Utc::now() > payment.expires_at {
-        return Json(serde_json::json!({
-            "error": "pagamento expirado"
-        }));
-    }
-
+    // 3. Verifica TX on-chain
     let cliente = services::inicializar_cliente(&get_rpc_url());
-
-    let verificacao = services::verificar_transacao(
-        &cliente,
-        &payload.tx_hash,
-    );
+    let verificacao = services::verificar_transacao(&cliente, &payload.tx_hash);
 
     if !verificacao.valida {
+        error!("TX inválida: {}", payload.tx_hash);
         return Json(serde_json::json!({
             "error": format!(
                 "transação inválida on-chain: {}",
@@ -255,21 +264,16 @@ async fn webhook_confirm(
         }));
     }
 
-    let limite = Decimal::from(10000);
-    let risco = if payload.amount > limite { 90u8 } else { 10u8 };
+    // 4. Verifica risco
+    let risco = match verificar_risco(payload.amount) {
+        Ok(r) => r,
+        Err(e) => return Json(e),
+    };
 
-    if risco > 80 {
-        return Json(serde_json::json!({
-            "error": "suspeita de fraude"
-        }));
-    }
+    // 5. Atualiza status
+    governance::atualizar_status_payment(&pool, &payload.payment_id, "paid").await;
 
-    governance::atualizar_status_payment(
-        &pool,
-        &payload.payment_id,
-        "paid",
-    )
-    .await;
+    info!("Payment confirmado: {}", payload.payment_id);
 
     Json(serde_json::json!(ConfirmResponse {
         status: "paid".to_string(),
@@ -285,9 +289,7 @@ async fn get_payment(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     if !autenticar(&headers) {
-        return Json(serde_json::json!({
-            "error": "API Key inválida ou ausente"
-        }));
+        return Json(erro_nao_autorizado().0);
     }
 
     match governance::buscar_payment(&pool, &id).await {
@@ -298,9 +300,7 @@ async fn get_payment(
             "merchant_id": payment.merchant_id,
             "expires_at": payment.expires_at.to_rfc3339()
         })),
-        None => Json(serde_json::json!({
-            "error": "payment não encontrado"
-        })),
+        None => Json(serde_json::json!({ "error": "payment não encontrado" })),
     }
 }
 
@@ -309,9 +309,7 @@ async fn pix_offramp(
     Json(payload): Json<PixRequest>,
 ) -> impl IntoResponse {
     if !autenticar(&headers) {
-        return Json(serde_json::json!({
-            "error": "API Key inválida ou ausente"
-        }));
+        return Json(erro_nao_autorizado().0);
     }
 
     let pedido = pix::criar_pedido_pix(
@@ -323,6 +321,8 @@ async fn pix_offramp(
     );
 
     let resultado = pix::enviar_para_vasp(&pedido).await;
+
+    info!("PIX off-ramp: {}", pedido.id);
 
     Json(serde_json::json!({
         "sucesso": resultado.sucesso,
@@ -338,7 +338,7 @@ pub async fn iniciar_servidor(
     host: String,
     port: String,
     _solana_rpc: String,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -358,11 +358,24 @@ pub async fn iniciar_servidor(
 
     let addr: SocketAddr = format!("{}:{}", host, port)
         .parse()
-        .expect("Endereço inválido");
+        .map_err(|e| {
+            error!("Endereço inválido: {}", e);
+            e
+        })?;
 
-    let listener = TcpListener::bind(addr).await.unwrap();
+    let listener = TcpListener::bind(addr).await
+        .map_err(|e| {
+            error!("Erro ao bind: {}", e);
+            e
+        })?;
 
-    println!("✅ SlipPay 2.0 pronto!");
+    info!("✅ SlipPay 2.0 pronto em http://{}", addr);
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await
+        .map_err(|e| {
+            error!("Erro no servidor: {}", e);
+            e
+        })?;
+
+    Ok(())
 }
