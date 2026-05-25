@@ -6,8 +6,8 @@ use solana_sdk::transaction::Transaction;
 use spl_token::instruction::transfer_checked;
 use spl_associated_token_account::get_associated_token_address;
 use std::str::FromStr;
+use tracing::{error, info, warn};
 
-/// USDC Devnet mint address
 pub const USDC_MINT_DEVNET: &str =
     "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
@@ -17,23 +17,33 @@ pub struct VerificacaoTx {
     pub erro: Option<String>,
 }
 
-/// Inicializa cliente RPC da Solana
 pub fn inicializar_cliente(url: &str) -> RpcClient {
     RpcClient::new(url.to_string())
 }
 
-/// Consulta saldo SOL de uma conta
+/// Consulta saldo SOL — retorna 0 em caso de erro
 pub fn consultar_saldo(cliente: &RpcClient, conta: &Pubkey) -> u64 {
-    cliente.get_balance(conta).expect("Erro ao consultar saldo")
+    match cliente.get_balance(conta) {
+        Ok(saldo) => saldo,
+        Err(e) => {
+            error!("Erro ao consultar saldo de {}: {}", conta, e);
+            0
+        }
+    }
 }
 
-/// Consulta saldo USDC de uma conta
+/// Consulta saldo USDC — retorna 0 em caso de erro
 pub fn consultar_saldo_usdc(
     cliente: &RpcClient,
     conta: &Pubkey,
 ) -> u64 {
-    let mint = USDC_MINT_DEVNET.parse::<Pubkey>()
-        .expect("Mint inválido");
+    let mint = match USDC_MINT_DEVNET.parse::<Pubkey>() {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Mint USDC inválido: {}", e);
+            return 0;
+        }
+    };
 
     let ata = get_associated_token_address(conta, &mint);
 
@@ -51,11 +61,12 @@ pub fn verificar_transacao(
     let assinatura = match Signature::from_str(tx_hash) {
         Ok(sig) => sig,
         Err(_) => {
+            warn!("TX hash inválido: {}", tx_hash);
             return VerificacaoTx {
                 valida: false,
                 confirmacoes: 0,
                 erro: Some("tx_hash inválido".to_string()),
-            }
+            };
         }
     };
 
@@ -69,8 +80,14 @@ pub fn verificar_transacao(
                 .transaction
                 .meta
                 .as_ref()
-                .and_then(|m| Some(m.err.is_none()))
+                .map(|m| m.err.is_none())
                 .unwrap_or(false);
+
+            if sucesso {
+                info!("TX válida: {} ({} confirmações)", tx_hash, confirmacoes);
+            } else {
+                warn!("TX falhou on-chain: {}", tx_hash);
+            }
 
             VerificacaoTx {
                 valida: sucesso,
@@ -82,21 +99,24 @@ pub fn verificar_transacao(
                 },
             }
         }
-        Err(e) => VerificacaoTx {
-            valida: false,
-            confirmacoes: 0,
-            erro: Some(format!("Erro ao buscar tx: {}", e)),
-        },
+        Err(e) => {
+            error!("Erro ao buscar TX {}: {}", tx_hash, e);
+            VerificacaoTx {
+                valida: false,
+                confirmacoes: 0,
+                erro: Some(format!("Erro ao buscar tx: {}", e)),
+            }
+        }
     }
 }
 
-/// Envia SOL simples
+/// Envia SOL simples — retorna Result em vez de panicar
 pub fn enviar_transacao(
     cliente: &RpcClient,
     remetente: &Keypair,
     destinatario: &Pubkey,
     valor: u64,
-) -> String {
+) -> Result<String, String> {
     let instrucoes = system_instruction::transfer(
         &remetente.pubkey(),
         destinatario,
@@ -105,7 +125,7 @@ pub fn enviar_transacao(
 
     let blockhash = cliente
         .get_latest_blockhash()
-        .expect("Erro ao obter blockhash");
+        .map_err(|e| format!("Erro ao obter blockhash: {}", e))?;
 
     let transacao = Transaction::new_signed_with_payer(
         &[instrucoes],
@@ -116,20 +136,22 @@ pub fn enviar_transacao(
 
     let assinatura = cliente
         .send_and_confirm_transaction(&transacao)
-        .expect("Erro ao enviar transação");
+        .map_err(|e| format!("Erro ao enviar transação: {}", e))?;
 
-    assinatura.to_string()
+    info!("SOL enviado: {}", assinatura);
+    Ok(assinatura.to_string())
 }
 
-/// Envia USDC via SPL Token
+/// Envia USDC via SPL Token — retorna Result em vez de panicar
 pub fn enviar_usdc(
     cliente: &RpcClient,
     remetente: &Keypair,
     destinatario: &Pubkey,
     valor: u64,
-) -> String {
-    let mint = USDC_MINT_DEVNET.parse::<Pubkey>()
-        .expect("Mint inválido");
+) -> Result<String, String> {
+    let mint = USDC_MINT_DEVNET
+        .parse::<Pubkey>()
+        .map_err(|e| format!("Mint inválido: {}", e))?;
 
     let origem_ata = get_associated_token_address(
         &remetente.pubkey(),
@@ -151,11 +173,11 @@ pub fn enviar_usdc(
         valor,
         6,
     )
-    .expect("Erro ao criar instrução USDC");
+    .map_err(|e| format!("Erro ao criar instrução USDC: {}", e))?;
 
     let blockhash = cliente
         .get_latest_blockhash()
-        .expect("Erro ao obter blockhash");
+        .map_err(|e| format!("Erro ao obter blockhash: {}", e))?;
 
     let transacao = Transaction::new_signed_with_payer(
         &[instrucao],
@@ -166,9 +188,10 @@ pub fn enviar_usdc(
 
     let assinatura = cliente
         .send_and_confirm_transaction(&transacao)
-        .expect("Erro ao enviar USDC");
+        .map_err(|e| format!("Erro ao enviar USDC: {}", e))?;
 
-    assinatura.to_string()
+    info!("USDC enviado: {} lamports → {}", valor, assinatura);
+    Ok(assinatura.to_string())
 }
 
 #[cfg(test)]
@@ -196,3 +219,4 @@ mod tests {
         assert!(!resultado.valida);
     }
 }
+
