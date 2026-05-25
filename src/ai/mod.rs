@@ -1,16 +1,15 @@
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use tracing::info;
 use crate::interface::Transacao;
 
-/// Score de risco de uma transação
 pub struct RiscoTransacao {
-    pub score: u8,          // 0-100
-    pub nivel: String,      // baixo, medio, alto, critico
+    pub score: u8,
+    pub nivel: String,
     pub motivos: Vec<String>,
     pub aprovada: bool,
 }
 
-/// Analisa uma lista de transações — retorna resultado simples
 pub fn analise_antifraude(transacoes: Vec<Transacao>) -> String {
     if transacoes.iter().any(|t| t.valor > dec!(10000)) {
         "Suspeita de fraude".to_string()
@@ -19,93 +18,136 @@ pub fn analise_antifraude(transacoes: Vec<Transacao>) -> String {
     }
 }
 
-/// Análise avançada de risco por transação individual
+/// Fator 1: score por valor absoluto
+fn score_valor(valor: Decimal, motivos: &mut Vec<String>) -> u8 {
+    if valor > dec!(50000) {
+        motivos.push("valor acima de $50.000".to_string());
+        40
+    } else if valor > dec!(10000) {
+        motivos.push("valor acima de $10.000".to_string());
+        25
+    } else if valor > dec!(5000) {
+        motivos.push("valor acima de $5.000".to_string());
+        10
+    } else {
+        0
+    }
+}
+
+/// Fator 2: score por desvio histórico
+fn score_historico(
+    valor: Decimal,
+    historico: &[Decimal],
+    motivos: &mut Vec<String>,
+) -> u8 {
+    if historico.is_empty() {
+        return 0;
+    }
+
+    let media: Decimal = historico.iter().sum::<Decimal>()
+        / Decimal::from(historico.len() as u64);
+
+    if media <= dec!(0) {
+        return 0;
+    }
+
+    let desvio = ((valor - media) / media * dec!(100)).abs();
+
+    if desvio > dec!(500) {
+        motivos.push(format!(
+            "valor {}% acima da média histórica",
+            desvio.round()
+        ));
+        30
+    } else if desvio > dec!(200) {
+        motivos.push(format!(
+            "valor {}% acima da média histórica",
+            desvio.round()
+        ));
+        15
+    } else {
+        0
+    }
+}
+
+/// Fator 3: score por formato de wallet
+fn score_wallet(wallet: &str, motivos: &mut Vec<String>) -> u8 {
+    if wallet.len() < 32 {
+        motivos.push("wallet com formato suspeito".to_string());
+        20
+    } else {
+        0
+    }
+}
+
+/// Fator 4: score por network
+fn score_network(network: &str, motivos: &mut Vec<String>) -> u8 {
+    if network != "solana" && network != "stellar" {
+        motivos.push(format!("network desconhecida: {}", network));
+        15
+    } else {
+        0
+    }
+}
+
+/// Fator 5: score por volume recente
+fn score_volume_recente(
+    historico: &[Decimal],
+    motivos: &mut Vec<String>,
+) -> u8 {
+    if historico.len() < 5 {
+        return 0;
+    }
+
+    let soma_recente: Decimal = historico
+        .iter()
+        .rev()
+        .take(5)
+        .sum();
+
+    if soma_recente > dec!(100000) {
+        motivos.push("volume alto nas últimas 5 transações".to_string());
+        20
+    } else {
+        0
+    }
+}
+
+/// Converte score em nível textual
+fn score_para_nivel(score: u8) -> String {
+    match score {
+        0..=20 => "baixo".to_string(),
+        21..=50 => "medio".to_string(),
+        51..=80 => "alto".to_string(),
+        _ => "critico".to_string(),
+    }
+}
+
+/// Análise avançada de risco — subfunções extraídas (Orion)
 pub fn analisar_risco(
     valor: Decimal,
     historico: &[Decimal],
     wallet: &str,
     network: &str,
 ) -> RiscoTransacao {
-    let mut score: u8 = 0;
     let mut motivos: Vec<String> = Vec::new();
 
-    // Fator 1: valor absoluto
-    if valor > dec!(50000) {
-        score = score.saturating_add(40);
-        motivos.push("valor acima de $50.000".to_string());
-    } else if valor > dec!(10000) {
-        score = score.saturating_add(25);
-        motivos.push("valor acima de $10.000".to_string());
-    } else if valor > dec!(5000) {
-        score = score.saturating_add(10);
-        motivos.push("valor acima de $5.000".to_string());
-    }
+    let score: u8 = [
+        score_valor(valor, &mut motivos),
+        score_historico(valor, historico, &mut motivos),
+        score_wallet(wallet, &mut motivos),
+        score_network(network, &mut motivos),
+        score_volume_recente(historico, &mut motivos),
+    ]
+    .iter()
+    .fold(0u8, |acc, &s| acc.saturating_add(s));
 
-    // Fator 2: desvio em relação ao histórico
-    if !historico.is_empty() {
-        let media: Decimal = historico.iter().sum::<Decimal>()
-            / Decimal::from(historico.len() as u64);
-
-        if media > dec!(0) {
-            let desvio = ((valor - media) / media * dec!(100)).abs();
-
-            if desvio > dec!(500) {
-                score = score.saturating_add(30);
-                motivos.push(format!(
-                    "valor {}% acima da média histórica",
-                    desvio.round()
-                ));
-            } else if desvio > dec!(200) {
-                score = score.saturating_add(15);
-                motivos.push(format!(
-                    "valor {}% acima da média histórica",
-                    desvio.round()
-                ));
-            }
-        }
-    }
-
-    // Fator 3: wallet suspeita (endereço muito curto ou padrão)
-    if wallet.len() < 32 {
-        score = score.saturating_add(20);
-        motivos.push("wallet com formato suspeito".to_string());
-    }
-
-    // Fator 4: network desconhecida
-    if network != "solana" && network != "stellar" {
-        score = score.saturating_add(15);
-        motivos.push(format!("network desconhecida: {}", network));
-    }
-
-    // Fator 5: volume alto no histórico recente
-    if historico.len() >= 5 {
-        let soma_recente: Decimal = historico
-            .iter()
-            .rev()
-            .take(5)
-            .sum();
-
-        if soma_recente > dec!(100000) {
-            score = score.saturating_add(20);
-            motivos.push("volume alto nas últimas 5 transações".to_string());
-        }
-    }
-
-    let nivel = match score {
-        0..=20 => "baixo".to_string(),
-        21..=50 => "medio".to_string(),
-        51..=80 => "alto".to_string(),
-        _ => "critico".to_string(),
-    };
-
+    let nivel = score_para_nivel(score);
     let aprovada = score <= 80;
 
-    RiscoTransacao {
-        score,
-        nivel,
-        motivos,
-        aprovada,
-    }
+    info!("Risco analisado: score={} nivel={}", score, nivel);
+
+    RiscoTransacao { score, nivel, motivos, aprovada }
 }
 
 #[cfg(test)]
