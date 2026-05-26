@@ -3,9 +3,7 @@ use chrono::{Utc, DateTime};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use uuid::Uuid;
-
-/// Resoluções BCB 519/520/521 — Nov 2025
-/// Framework completo para VASPs no Brasil
+use tracing::info;
 
 /// Limites operacionais BCB
 pub const LIMITE_TRANSACAO_SEM_KYC: Decimal = dec!(1000);
@@ -14,16 +12,14 @@ pub const LIMITE_TRANSACAO_KYC_BASICO: Decimal = dec!(10000);
 pub const LIMITE_MENSAL_KYC_BASICO: Decimal = dec!(50000);
 pub const LIMITE_TRANSACAO_KYC_COMPLETO: Decimal = dec!(100000);
 
-/// Nível de KYC do usuário
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NivelKyc {
     Nenhum,
-    Basico,    // CPF + nome
-    Completo,  // CPF + RG + comprovante
-    Institucional, // CNPJ + documentos empresa
+    Basico,
+    Completo,
+    Institucional,
 }
 
-/// Status de compliance de uma transação
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StatusCompliance {
     Aprovada,
@@ -32,7 +28,6 @@ pub enum StatusCompliance {
     RequerKyc,
 }
 
-/// Registro KYC de um merchant/usuário
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistroKyc {
     pub id: String,
@@ -46,7 +41,6 @@ pub struct RegistroKyc {
     pub atualizado_em: DateTime<Utc>,
 }
 
-/// Resultado da verificação de compliance
 #[derive(Debug, Serialize)]
 pub struct ResultadoCompliance {
     pub aprovada: bool,
@@ -57,7 +51,6 @@ pub struct ResultadoCompliance {
     pub resolucao_bcb: String,
 }
 
-/// Relatório de transação para o BCB (COAF)
 #[derive(Debug, Serialize)]
 pub struct RelatorioTransacao {
     pub id: String,
@@ -74,11 +67,105 @@ pub struct RelatorioTransacao {
     pub motivo_flag: Option<String>,
 }
 
-/// Verifica compliance de uma transação
-/// Baseado nas Resoluções BCB 519/520/521
+/// Resolução 519 — verifica limites sem KYC
+fn verificar_res519(
+    valor_usdc: Decimal,
+    volume_mensal: Decimal,
+    motivos: &mut Vec<String>,
+) -> (bool, bool, NivelKyc) {
+    let mut aprovada = true;
+    let mut requer_kyc = false;
+
+    if valor_usdc > LIMITE_TRANSACAO_SEM_KYC {
+        aprovada = false;
+        requer_kyc = true;
+        motivos.push(format!(
+            "Res. BCB 519: transação acima de USDC {} requer KYC básico",
+            LIMITE_TRANSACAO_SEM_KYC
+        ));
+    }
+
+    if volume_mensal + valor_usdc > LIMITE_MENSAL_SEM_KYC {
+        aprovada = false;
+        requer_kyc = true;
+        motivos.push(format!(
+            "Res. BCB 519: volume mensal acima de USDC {} requer KYC básico",
+            LIMITE_MENSAL_SEM_KYC
+        ));
+    }
+
+    (aprovada, requer_kyc, NivelKyc::Basico)
+}
+
+/// Resolução 520 — verifica limites com KYC básico
+fn verificar_res520(
+    valor_usdc: Decimal,
+    volume_mensal: Decimal,
+    kyc: &RegistroKyc,
+    motivos: &mut Vec<String>,
+) -> (bool, bool, NivelKyc) {
+    let mut aprovada = true;
+    let mut requer_kyc = false;
+
+    if valor_usdc > LIMITE_TRANSACAO_KYC_BASICO {
+        aprovada = false;
+        requer_kyc = true;
+        motivos.push(format!(
+            "Res. BCB 520: transação acima de USDC {} requer KYC completo",
+            LIMITE_TRANSACAO_KYC_BASICO
+        ));
+    }
+
+    if volume_mensal + valor_usdc > LIMITE_MENSAL_KYC_BASICO {
+        aprovada = false;
+        requer_kyc = true;
+        motivos.push(format!(
+            "Res. BCB 520: volume mensal acima de USDC {} requer KYC completo",
+            LIMITE_MENSAL_KYC_BASICO
+        ));
+    }
+
+    if !kyc.verificado {
+        aprovada = false;
+        motivos.push("KYC básico não verificado".to_string());
+    }
+
+    (aprovada, requer_kyc, NivelKyc::Completo)
+}
+
+/// Resolução 521 — reporte COAF
+fn verificar_res521(
+    valor_usdc: Decimal,
+    motivos: &mut Vec<String>,
+) {
+    if valor_usdc > dec!(10000) {
+        motivos.push(
+            "Res. BCB 521: transação acima de USDC 10.000 deve ser reportada ao COAF"
+                .to_string()
+        );
+    }
+}
+
+/// Verifica países bloqueados por sanções
+fn verificar_sancoes(
+    kyc: &RegistroKyc,
+    motivos: &mut Vec<String>,
+) -> bool {
+    let paises_bloqueados = ["IR", "KP", "CU", "SY", "RU"];
+    if paises_bloqueados.contains(&kyc.pais.as_str()) {
+        motivos.push(format!(
+            "País {} bloqueado por sanções internacionais",
+            kyc.pais
+        ));
+        return false;
+    }
+    true
+}
+
+/// Verifica compliance — subfunções extraídas (Orion)
 pub fn verificar_compliance(
     valor_usdc: Decimal,
-    merchant_id: &str,
+    _merchant_id: &str,
     kyc: Option<&RegistroKyc>,
     volume_mensal: Decimal,
 ) -> ResultadoCompliance {
@@ -87,75 +174,33 @@ pub fn verificar_compliance(
     let mut requer_kyc = false;
     let mut nivel_requerido = NivelKyc::Nenhum;
 
-    // Resolução 519 — Limites sem KYC
+    // Res. 519 — sem KYC
     if kyc.is_none() || kyc.map(|k| &k.nivel) == Some(&NivelKyc::Nenhum) {
-        if valor_usdc > LIMITE_TRANSACAO_SEM_KYC {
-            aprovada = false;
-            requer_kyc = true;
-            nivel_requerido = NivelKyc::Basico;
-            motivos.push(format!(
-                "Res. BCB 519: transação acima de USDC {} requer KYC básico",
-                LIMITE_TRANSACAO_SEM_KYC
-            ));
-        }
-
-        if volume_mensal + valor_usdc > LIMITE_MENSAL_SEM_KYC {
-            aprovada = false;
-            requer_kyc = true;
-            nivel_requerido = NivelKyc::Basico;
-            motivos.push(format!(
-                "Res. BCB 519: volume mensal acima de USDC {} requer KYC básico",
-                LIMITE_MENSAL_SEM_KYC
-            ));
-        }
+        let (ap, rk, nivel) = verificar_res519(
+            valor_usdc, volume_mensal, &mut motivos
+        );
+        if !ap { aprovada = false; }
+        if rk { requer_kyc = true; nivel_requerido = nivel; }
     }
 
-    // Resolução 520 — KYC básico
+    // Res. 520 — KYC básico
     if let Some(k) = kyc {
         if k.nivel == NivelKyc::Basico {
-            if valor_usdc > LIMITE_TRANSACAO_KYC_BASICO {
-                aprovada = false;
-                requer_kyc = true;
-                nivel_requerido = NivelKyc::Completo;
-                motivos.push(format!(
-                    "Res. BCB 520: transação acima de USDC {} requer KYC completo",
-                    LIMITE_TRANSACAO_KYC_BASICO
-                ));
-            }
-
-            if volume_mensal + valor_usdc > LIMITE_MENSAL_KYC_BASICO {
-                aprovada = false;
-                requer_kyc = true;
-                nivel_requerido = NivelKyc::Completo;
-                motivos.push(format!(
-                    "Res. BCB 520: volume mensal acima de USDC {} requer KYC completo",
-                    LIMITE_MENSAL_KYC_BASICO
-                ));
-            }
-
-            if !k.verificado {
-                aprovada = false;
-                motivos.push("KYC básico não verificado".to_string());
-            }
+            let (ap, rk, nivel) = verificar_res520(
+                valor_usdc, volume_mensal, k, &mut motivos
+            );
+            if !ap { aprovada = false; }
+            if rk { requer_kyc = true; nivel_requerido = nivel; }
         }
     }
 
-    // Resolução 521 — Reporte COAF
-    if valor_usdc > dec!(10000) {
-        motivos.push(format!(
-            "Res. BCB 521: transação acima de USDC 10.000 deve ser reportada ao COAF"
-        ));
-    }
+    // Res. 521 — COAF
+    verificar_res521(valor_usdc, &mut motivos);
 
-    // País bloqueado (sanções internacionais)
+    // Sanções internacionais
     if let Some(k) = kyc {
-        let paises_bloqueados = vec!["IR", "KP", "CU", "SY", "RU"];
-        if paises_bloqueados.contains(&k.pais.as_str()) {
+        if !verificar_sancoes(k, &mut motivos) {
             aprovada = false;
-            motivos.push(format!(
-                "País {} bloqueado por sanções internacionais",
-                k.pais
-            ));
         }
     }
 
@@ -167,6 +212,8 @@ pub fn verificar_compliance(
         StatusCompliance::Bloqueada
     };
 
+    info!("Compliance verificado: aprovada={} requer_kyc={}", aprovada, requer_kyc);
+
     ResultadoCompliance {
         aprovada,
         status,
@@ -177,7 +224,6 @@ pub fn verificar_compliance(
     }
 }
 
-/// Cria registro KYC básico
 pub fn criar_kyc_basico(
     merchant_id: &str,
     documento: &str,
@@ -197,7 +243,6 @@ pub fn criar_kyc_basico(
     }
 }
 
-/// Gera relatório de transação para o COAF
 pub fn gerar_relatorio_coaf(
     payment_id: &str,
     merchant_id: &str,
@@ -214,6 +259,8 @@ pub fn gerar_relatorio_coaf(
     } else {
         None
     };
+
+    info!("Relatório COAF gerado: payment_id={} flag={}", payment_id, flag_suspeita);
 
     RelatorioTransacao {
         id: Uuid::new_v4().to_string(),
@@ -238,10 +285,7 @@ mod tests {
     #[test]
     fn test_compliance_sem_kyc_valor_ok() {
         let resultado = verificar_compliance(
-            dec!(500),
-            "merchant-001",
-            None,
-            dec!(0),
+            dec!(500), "merchant-001", None, dec!(0),
         );
         assert!(resultado.aprovada);
     }
@@ -249,10 +293,7 @@ mod tests {
     #[test]
     fn test_compliance_sem_kyc_valor_alto() {
         let resultado = verificar_compliance(
-            dec!(1500),
-            "merchant-001",
-            None,
-            dec!(0),
+            dec!(1500), "merchant-001", None, dec!(0),
         );
         assert!(!resultado.aprovada);
         assert!(resultado.requer_kyc);
@@ -271,12 +312,8 @@ mod tests {
             criado_em: Utc::now(),
             atualizado_em: Utc::now(),
         };
-
         let resultado = verificar_compliance(
-            dec!(5000),
-            "merchant-001",
-            Some(&kyc),
-            dec!(0),
+            dec!(5000), "merchant-001", Some(&kyc), dec!(0),
         );
         assert!(resultado.aprovada);
     }
@@ -294,12 +331,8 @@ mod tests {
             criado_em: Utc::now(),
             atualizado_em: Utc::now(),
         };
-
         let resultado = verificar_compliance(
-            dec!(100),
-            "merchant-002",
-            Some(&kyc),
-            dec!(0),
+            dec!(100), "merchant-002", Some(&kyc), dec!(0),
         );
         assert!(!resultado.aprovada);
     }
@@ -307,14 +340,10 @@ mod tests {
     #[test]
     fn test_relatorio_coaf() {
         let relatorio = gerar_relatorio_coaf(
-            "pay-001",
-            "merchant-001",
-            dec!(15000),
-            dec!(78000),
-            "wallet-origem",
-            "wallet-destino",
-            "solana",
-            None,
+            "pay-001", "merchant-001",
+            dec!(15000), dec!(78000),
+            "wallet-origem", "wallet-destino",
+            "solana", None,
         );
         assert!(relatorio.flag_suspeita);
         assert!(relatorio.motivo_flag.is_some());
