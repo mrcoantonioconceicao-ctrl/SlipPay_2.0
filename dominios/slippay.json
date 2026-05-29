@@ -1,0 +1,11 @@
+{
+  "description": "SlipPay - gateway de pagamento não-custodial em Solana",
+  "repo": "mrcoantonioconceicao-ctrl/slippay",
+  "owner": {
+    "username": "mrcoantonioconceicao-ctrl"
+  },
+  "record": {
+    "A": ["192.0.2.1"],
+    "CNAME": "slippay.is-a.dev"
+  }
+}
