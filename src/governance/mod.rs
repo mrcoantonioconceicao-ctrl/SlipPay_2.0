@@ -1,6 +1,6 @@
-use sqlx::{Pool, Postgres, Row, postgres::PgPoolOptions};
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use chrono::{Utc, DateTime};
+use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -28,11 +28,7 @@ pub struct Payment {
 
 /// Conecta no PostgreSQL — propaga erro em vez de panicar
 pub async fn conectar_db(url: &str) -> Pool<Postgres> {
-    match PgPoolOptions::new()
-        .max_connections(5)
-        .connect(url)
-        .await
-    {
+    match PgPoolOptions::new().max_connections(5).connect(url).await {
         Ok(pool) => {
             info!("Banco conectado com sucesso");
             pool
@@ -54,7 +50,7 @@ pub async fn criar_tabela(pool: &Pool<Postgres>) {
             valor NUMERIC NOT NULL,
             timestamp TIMESTAMPTZ NOT NULL
         )
-        "#
+        "#,
     )
     .execute(pool)
     .await
@@ -64,17 +60,14 @@ pub async fn criar_tabela(pool: &Pool<Postgres>) {
     }
 }
 
-pub async fn registrar_transacao(
-    pool: &Pool<Postgres>,
-    log: LogTransacao,
-) {
+pub async fn registrar_transacao(pool: &Pool<Postgres>, log: LogTransacao) {
     match sqlx::query(
         r#"
         INSERT INTO auditoria (
             id, conta_origem, conta_destino, valor, timestamp
         )
         VALUES ($1, $2, $3, $4, $5)
-        "#
+        "#,
     )
     .bind(&log.id)
     .bind(&log.conta_origem)
@@ -104,7 +97,7 @@ pub async fn criar_tabela_payments(pool: &Pool<Postgres>) {
             status TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL
         )
-        "#
+        "#,
     )
     .execute(pool)
     .await
@@ -114,10 +107,7 @@ pub async fn criar_tabela_payments(pool: &Pool<Postgres>) {
     }
 }
 
-pub async fn salvar_payment(
-    pool: &Pool<Postgres>,
-    payment: Payment,
-) {
+pub async fn salvar_payment(pool: &Pool<Postgres>, payment: Payment) {
     match sqlx::query(
         r#"
         INSERT INTO payments (
@@ -126,7 +116,7 @@ pub async fn salvar_payment(
             expires_at, status, created_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        "#
+        "#,
     )
     .bind(&payment.payment_id)
     .bind(&payment.merchant_id)
@@ -146,16 +136,11 @@ pub async fn salvar_payment(
     }
 }
 
-pub async fn buscar_payment(
-    pool: &Pool<Postgres>,
-    id: &str,
-) -> Option<Payment> {
-    match sqlx::query(
-        r#"SELECT * FROM payments WHERE payment_id = $1"#
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
+pub async fn buscar_payment(pool: &Pool<Postgres>, id: &str) -> Option<Payment> {
+    match sqlx::query(r#"SELECT * FROM payments WHERE payment_id = $1"#)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
     {
         Ok(row) => row.map(|r| Payment {
             payment_id: r.get("payment_id"),
@@ -176,18 +161,12 @@ pub async fn buscar_payment(
     }
 }
 
-pub async fn atualizar_status_payment(
-    pool: &Pool<Postgres>,
-    id: &str,
-    status: &str,
-) {
-    match sqlx::query(
-        r#"UPDATE payments SET status = $1 WHERE payment_id = $2"#
-    )
-    .bind(status)
-    .bind(id)
-    .execute(pool)
-    .await
+pub async fn atualizar_status_payment(pool: &Pool<Postgres>, id: &str, status: &str) {
+    match sqlx::query(r#"UPDATE payments SET status = $1 WHERE payment_id = $2"#)
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await
     {
         Ok(_) => info!("Payment {} atualizado para {}", id, status),
         Err(e) => error!("Erro ao atualizar payment {}: {}", id, e),

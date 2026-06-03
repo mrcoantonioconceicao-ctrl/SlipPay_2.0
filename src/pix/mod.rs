@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, DateTime};
-use uuid::Uuid;
 use std::env;
+use uuid::Uuid;
 
 /// Status de um pedido de off-ramp PIX
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +61,9 @@ pub enum ModoVasp {
 /// Taxa do VASP parceiro: 0.5%
 pub const TAXA_VASP: Decimal = dec!(0.5);
 
+/// Limite máximo por off-ramp
+pub const LIMITE_OFFRAMP_USDC: Decimal = dec!(50000);
+
 /// Carrega configuração do VASP do .env
 pub fn carregar_config_vasp() -> ConfigVasp {
     let modo = match env::var("VASP_MODO")
@@ -72,28 +75,23 @@ pub fn carregar_config_vasp() -> ConfigVasp {
     };
 
     ConfigVasp {
-        nome: env::var("VASP_NOME")
-            .unwrap_or_else(|_| "SlipPay VASP Simulado".to_string()),
+        nome: env::var("VASP_NOME").unwrap_or_else(|_| "SlipPay VASP Simulado".to_string()),
         api_url: env::var("VASP_API_URL")
             .unwrap_or_else(|_| "https://api.vasp.simulado.io".to_string()),
-        api_key: env::var("VASP_API_KEY")
-            .unwrap_or_else(|_| "vasp-key-simulado".to_string()),
+        api_key: env::var("VASP_API_KEY").unwrap_or_else(|_| "vasp-key-simulado".to_string()),
         taxa: TAXA_VASP,
         modo,
     }
 }
 
 /// Calcula o valor em BRL dado USDC e taxa de câmbio
-pub fn calcular_valor_brl(
-    valor_usdc: Decimal,
-    taxa_cambio: Decimal,
-) -> Decimal {
-    valor_usdc * taxa_cambio
+pub fn calcular_valor_brl(valor_usdc: Decimal, taxa_cambio: Decimal) -> Decimal {
+    (valor_usdc * taxa_cambio).round_dp(2)
 }
 
 /// Calcula taxa do VASP
 pub fn calcular_taxa_vasp(valor_brl: Decimal) -> Decimal {
-    valor_brl * (TAXA_VASP / dec!(100))
+    (valor_brl * (TAXA_VASP / dec!(100))).round_dp(2)
 }
 
 /// Cria um pedido de off-ramp PIX
@@ -105,8 +103,10 @@ pub fn criar_pedido_pix(
     taxa_cambio: Decimal,
 ) -> PedidoPix {
     let valor_brl = calcular_valor_brl(valor_usdc, taxa_cambio);
+
     let taxa_vasp = calcular_taxa_vasp(valor_brl);
-    let valor_liquido_brl = valor_brl - taxa_vasp;
+
+    let valor_liquido_brl = (valor_brl - taxa_vasp).round_dp(2);
 
     PedidoPix {
         id: Uuid::new_v4().to_string(),
@@ -129,32 +129,25 @@ pub fn validar_chave_pix(chave: &str) -> (bool, &'static str) {
         return (false, "Chave PIX vazia");
     }
 
-    // CPF: 11 dígitos
-    let apenas_numeros: String = chave.chars()
-        .filter(|c| c.is_numeric())
-        .collect();
+    let apenas_numeros: String = chave.chars().filter(|c| c.is_numeric()).collect();
 
     if apenas_numeros.len() == 11 {
         return (true, "cpf");
     }
 
-    // CNPJ: 14 dígitos
     if apenas_numeros.len() == 14 {
         return (true, "cnpj");
     }
 
-    // Telefone: começa com +55
     if chave.starts_with("+55") && chave.len() >= 13 {
         return (true, "telefone");
     }
 
-    // Email
     if chave.contains('@') && chave.contains('.') {
         return (true, "email");
     }
 
-    // Chave aleatória: 32 chars UUID
-    if chave.len() == 36 && chave.contains('-') {
+    if Uuid::parse_str(chave).is_ok() {
         return (true, "aleatoria");
     }
 
@@ -165,8 +158,8 @@ pub fn validar_chave_pix(chave: &str) -> (bool, &'static str) {
 pub async fn enviar_para_vasp(pedido: &PedidoPix) -> ResultadoPix {
     let config = carregar_config_vasp();
 
-    // Valida chave PIX
     let (pix_valido, tipo_chave) = validar_chave_pix(&pedido.chave_pix);
+
     if !pix_valido {
         return ResultadoPix {
             sucesso: false,
@@ -174,6 +167,18 @@ pub async fn enviar_para_vasp(pedido: &PedidoPix) -> ResultadoPix {
             valor_brl: dec!(0),
             valor_liquido_brl: dec!(0),
             mensagem: format!("Chave PIX inválida: {}", tipo_chave),
+            vasp_tx_id: None,
+            eta_segundos: None,
+        };
+    }
+
+    if pedido.taxa_cambio <= dec!(0) {
+        return ResultadoPix {
+            sucesso: false,
+            pedido_id: pedido.id.clone(),
+            valor_brl: dec!(0),
+            valor_liquido_brl: dec!(0),
+            mensagem: "Taxa de câmbio inválida".to_string(),
             vasp_tx_id: None,
             eta_segundos: None,
         };
@@ -191,7 +196,6 @@ pub async fn enviar_para_vasp(pedido: &PedidoPix) -> ResultadoPix {
         };
     }
 
-    // Limite mínimo: 1 USDC
     if pedido.valor_usdc < dec!(1) {
         return ResultadoPix {
             sucesso: false,
@@ -204,17 +208,27 @@ pub async fn enviar_para_vasp(pedido: &PedidoPix) -> ResultadoPix {
         };
     }
 
+    if pedido.valor_usdc > LIMITE_OFFRAMP_USDC {
+        return ResultadoPix {
+            sucesso: false,
+            pedido_id: pedido.id.clone(),
+            valor_brl: dec!(0),
+            valor_liquido_brl: dec!(0),
+            mensagem: format!("Limite máximo de off-ramp é {} USDC", LIMITE_OFFRAMP_USDC),
+            vasp_tx_id: None,
+            eta_segundos: None,
+        };
+    }
+
     match config.modo {
         ModoVasp::Simulado => enviar_simulado(pedido, tipo_chave).await,
+
         ModoVasp::Producao => enviar_producao(pedido, &config).await,
     }
 }
 
-/// Modo simulado — para testes e desenvolvimento
-async fn enviar_simulado(
-    pedido: &PedidoPix,
-    tipo_chave: &str,
-) -> ResultadoPix {
+/// Modo simulado
+async fn enviar_simulado(pedido: &PedidoPix, tipo_chave: &str) -> ResultadoPix {
     let vasp_tx_id = format!("VASP-SIM-{}", &pedido.id[..8]);
 
     ResultadoPix {
@@ -224,41 +238,21 @@ async fn enviar_simulado(
         valor_liquido_brl: pedido.valor_liquido_brl,
         mensagem: format!(
             "PIX simulado de R$ {:.2} enviado para {} ({}). TX: {}",
-            pedido.valor_liquido_brl,
-            pedido.chave_pix,
-            tipo_chave,
-            vasp_tx_id,
+            pedido.valor_liquido_brl, pedido.chave_pix, tipo_chave, vasp_tx_id,
         ),
         vasp_tx_id: Some(vasp_tx_id),
         eta_segundos: Some(30),
     }
 }
 
-/// Modo produção — chamada HTTP real ao VASP
-async fn enviar_producao(
-    pedido: &PedidoPix,
-    config: &ConfigVasp,
-) -> ResultadoPix {
-    // Em produção faria chamada HTTP ao VASP parceiro
-    // Exemplo: Transfero, Bitso, Mercado Bitcoin
-    //
-    // let client = reqwest::Client::new();
-    // let res = client
-    //     .post(&format!("{}/v1/offramp", config.api_url))
-    //     .header("Authorization", &format!("Bearer {}", config.api_key))
-    //     .json(&payload)
-    //     .send()
-    //     .await;
-
+/// Produção (placeholder)
+async fn enviar_producao(pedido: &PedidoPix, config: &ConfigVasp) -> ResultadoPix {
     ResultadoPix {
         sucesso: false,
         pedido_id: pedido.id.clone(),
         valor_brl: dec!(0),
         valor_liquido_brl: dec!(0),
-        mensagem: format!(
-            "VASP {} em produção — integração pendente",
-            config.nome
-        ),
+        mensagem: format!("VASP {} em produção — integração pendente", config.nome),
         vasp_tx_id: None,
         eta_segundos: None,
     }
@@ -272,15 +266,15 @@ mod tests {
     fn test_calcular_valor_brl() {
         let usdc = dec!(100);
         let cambio = dec!(5.20);
-        let brl = calcular_valor_brl(usdc, cambio);
-        assert_eq!(brl, dec!(520));
+
+        assert_eq!(calcular_valor_brl(usdc, cambio), dec!(520));
     }
 
     #[test]
     fn test_calcular_taxa_vasp() {
         let brl = dec!(520);
-        let taxa = calcular_taxa_vasp(brl);
-        assert_eq!(taxa, dec!(2.60));
+
+        assert_eq!(calcular_taxa_vasp(brl), dec!(2.60));
     }
 
     #[test]
@@ -292,6 +286,7 @@ mod tests {
             dec!(100),
             dec!(5.20),
         );
+
         assert_eq!(pedido.valor_brl, dec!(520));
         assert_eq!(pedido.taxa_vasp, dec!(2.60));
         assert_eq!(pedido.valor_liquido_brl, dec!(517.40));
@@ -300,6 +295,7 @@ mod tests {
     #[test]
     fn test_validar_chave_pix_email() {
         let (valido, tipo) = validar_chave_pix("merchant@email.com");
+
         assert!(valido);
         assert_eq!(tipo, "email");
     }
@@ -307,6 +303,7 @@ mod tests {
     #[test]
     fn test_validar_chave_pix_cpf() {
         let (valido, tipo) = validar_chave_pix("12345678901");
+
         assert!(valido);
         assert_eq!(tipo, "cpf");
     }
@@ -314,12 +311,14 @@ mod tests {
     #[test]
     fn test_validar_chave_pix_invalida() {
         let (valido, _) = validar_chave_pix("chave-invalida");
+
         assert!(!valido);
     }
 
     #[test]
     fn test_validar_chave_pix_telefone() {
         let (valido, tipo) = validar_chave_pix("+5511999999999");
+
         assert!(valido);
         assert_eq!(tipo, "telefone");
     }

@@ -1,7 +1,7 @@
+use crate::interface::Transacao;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tracing::info;
-use crate::interface::Transacao;
 
 pub struct RiscoTransacao {
     pub score: u8,
@@ -35,17 +35,12 @@ fn score_valor(valor: Decimal, motivos: &mut Vec<String>) -> u8 {
 }
 
 /// Fator 2: score por desvio histórico
-fn score_historico(
-    valor: Decimal,
-    historico: &[Decimal],
-    motivos: &mut Vec<String>,
-) -> u8 {
+fn score_historico(valor: Decimal, historico: &[Decimal], motivos: &mut Vec<String>) -> u8 {
     if historico.is_empty() {
         return 0;
     }
 
-    let media: Decimal = historico.iter().sum::<Decimal>()
-        / Decimal::from(historico.len() as u64);
+    let media: Decimal = historico.iter().sum::<Decimal>() / Decimal::from(historico.len() as u64);
 
     if media <= dec!(0) {
         return 0;
@@ -91,19 +86,12 @@ fn score_network(network: &str, motivos: &mut Vec<String>) -> u8 {
 }
 
 /// Fator 5: score por volume recente
-fn score_volume_recente(
-    historico: &[Decimal],
-    motivos: &mut Vec<String>,
-) -> u8 {
+fn score_volume_recente(historico: &[Decimal], motivos: &mut Vec<String>) -> u8 {
     if historico.len() < 5 {
         return 0;
     }
 
-    let soma_recente: Decimal = historico
-        .iter()
-        .rev()
-        .take(5)
-        .sum();
+    let soma_recente: Decimal = historico.iter().rev().take(5).sum();
 
     if soma_recente > dec!(100000) {
         motivos.push("volume alto nas últimas 5 transações".to_string());
@@ -147,7 +135,12 @@ pub fn analisar_risco(
 
     info!("Risco analisado: score={} nivel={}", score, nivel);
 
-    RiscoTransacao { score, nivel, motivos, aprovada }
+    RiscoTransacao {
+        score,
+        nivel,
+        motivos,
+        aprovada,
+    }
 }
 
 #[cfg(test)]

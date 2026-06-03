@@ -10,12 +10,12 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use sqlx::{Pool, Postgres};
+use std::env;
 use std::{net::SocketAddr, str::FromStr};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 use uuid::Uuid;
-use std::env;
 
 use crate::ai;
 use crate::finance;
@@ -98,8 +98,7 @@ fn autenticar(headers: &HeaderMap) -> bool {
 }
 
 fn get_rpc_url() -> String {
-    env::var("SOLANA_RPC_URL")
-        .unwrap_or_else(|_| "https://api.devnet.solana.com".to_string())
+    env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "https://api.devnet.solana.com".to_string())
 }
 
 fn erro_nao_autorizado() -> Json<serde_json::Value> {
@@ -121,10 +120,7 @@ async fn health() -> impl IntoResponse {
     }))
 }
 
-async fn saldo(
-    headers: HeaderMap,
-    Json(payload): Json<Transacao>,
-) -> impl IntoResponse {
+async fn saldo(headers: HeaderMap, Json(payload): Json<Transacao>) -> impl IntoResponse {
     if !autenticar(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -304,10 +300,7 @@ async fn get_payment(
     }
 }
 
-async fn pix_offramp(
-    headers: HeaderMap,
-    Json(payload): Json<PixRequest>,
-) -> impl IntoResponse {
+async fn pix_offramp(headers: HeaderMap, Json(payload): Json<PixRequest>) -> impl IntoResponse {
     if !autenticar(&headers) {
         return Json(erro_nao_autorizado().0);
     }
@@ -356,26 +349,22 @@ pub async fn iniciar_servidor(
         .layer(cors)
         .with_state(pool);
 
-    let addr: SocketAddr = format!("{}:{}", host, port)
-        .parse()
-        .map_err(|e| {
-            error!("Endereço inválido: {}", e);
-            e
-        })?;
+    let addr: SocketAddr = format!("{}:{}", host, port).parse().map_err(|e| {
+        error!("Endereço inválido: {}", e);
+        e
+    })?;
 
-    let listener = TcpListener::bind(addr).await
-        .map_err(|e| {
-            error!("Erro ao bind: {}", e);
-            e
-        })?;
+    let listener = TcpListener::bind(addr).await.map_err(|e| {
+        error!("Erro ao bind: {}", e);
+        e
+    })?;
 
     info!("✅ SlipPay 2.0 pronto em http://{}", addr);
 
-    axum::serve(listener, app).await
-        .map_err(|e| {
-            error!("Erro no servidor: {}", e);
-            e
-        })?;
+    axum::serve(listener, app).await.map_err(|e| {
+        error!("Erro no servidor: {}", e);
+        e
+    })?;
 
     Ok(())
 }

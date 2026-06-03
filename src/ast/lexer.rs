@@ -4,14 +4,14 @@ pub enum Token {
     Number(f64),
     Boolean(bool),
 
-    And,       // &&
-    Or,        // ||
-    Equal,     // ==
-    Less,      // <
-    Greater,   // >
+    And,     // &&
+    Or,      // ||
+    Equal,   // ==
+    Less,    // <
+    Greater, // >
 
-    LParen,    // (
-    RParen,    // )
+    LParen, // (
+    RParen, // )
 }
 
 pub fn tokenize(input: &str) -> Vec<Token> {
