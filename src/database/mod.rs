@@ -19,12 +19,8 @@ pub async fn conectar() -> Result<PgPool, sqlx::Error> {
 }
 
 /// Verifica se o banco está respondendo
-pub async fn verificar_conexao(
-    pool: &PgPool,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT 1")
-        .execute(pool)
-        .await?;
+pub async fn verificar_conexao(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT 1").execute(pool).await?;
 
     Ok(())
 }
@@ -41,9 +37,7 @@ mod tests {
             return;
         }
 
-        let pool = conectar()
-            .await
-            .expect("Falha ao conectar");
+        let pool = conectar().await.expect("Falha ao conectar");
 
         assert!(verificar_conexao(&pool).await.is_ok());
     }
