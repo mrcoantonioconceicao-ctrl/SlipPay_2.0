@@ -1,6 +1,7 @@
 mod ai;
 mod ast;
 mod compliance;
+mod config;
 mod database;
 mod finance;
 mod governance;
@@ -9,8 +10,8 @@ mod pix;
 mod security;
 mod services;
 
+use config::AppConfig;
 use dotenvy::dotenv;
-use std::env;
 
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -20,6 +21,7 @@ async fn main() {
     // =========================================================
     // LOGGING
     // =========================================================
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -28,34 +30,19 @@ async fn main() {
 
     dotenv().ok();
 
+    let config = AppConfig::load();
+
     info!("🚀 SlipPay 2.0 iniciando...");
 
     // =========================================================
     // CONFIGURAÇÕES
     // =========================================================
 
-    let database_url = match env::var("DATABASE_URL") {
-        Ok(url) => url,
-        Err(_) => {
-            error!("DATABASE_URL não encontrada");
-
-            error!(
-                "Configure no .env:
-DATABASE_URL=postgres://usuario:senha@localhost/slippay"
-            );
-
-            std::process::exit(1);
-        }
-    };
-
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-
-    let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-
-    let solana_rpc =
-        env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "https://api.devnet.solana.com".to_string());
-
-    let network = env::var("SOLANA_NETWORK").unwrap_or_else(|_| "devnet".to_string());
+    let database_url = config.database_url.clone();
+    let host = config.host.clone();
+    let port = config.port.clone();
+    let solana_rpc = config.solana_rpc_url.clone();
+    let network = config.solana_network.clone();
 
     info!("🌐 Host: {}", host);
     info!("🚪 Porta: {}", port);
@@ -79,9 +66,8 @@ DATABASE_URL=postgres://usuario:senha@localhost/slippay"
     // PIX
     // =========================================================
 
-    let vasp_nome = env::var("VASP_NOME").unwrap_or_else(|_| "SlipPay VASP".to_string());
-
-    let vasp_modo = env::var("VASP_MODO").unwrap_or_else(|_| "simulado".to_string());
+    let vasp_nome = config.vasp_nome.clone();
+    let vasp_modo = config.vasp_modo.clone();
 
     info!("🏦 PIX Off-Ramp ativo");
     info!("🏦 VASP: {}", vasp_nome);
