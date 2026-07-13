@@ -141,6 +141,12 @@
 
     .btn-primary:hover { background: #84cc16; }
 
+    .btn-primary:disabled {
+      background: #374151;
+      color: #6b7280;
+      cursor: not-allowed;
+    }
+
     .error-msg {
       color: #f87171;
       font-size: 13px;
@@ -378,7 +384,8 @@
       color: #f1f5f9;
     }
 
-    .form-card input {
+    .form-card input,
+    .form-card select {
       width: 100%;
       background: #0a0e1a;
       border: 1px solid #1e2d4a;
@@ -391,7 +398,8 @@
       transition: border-color 0.2s;
     }
 
-    .form-card input:focus { border-color: #a3e635; }
+    .form-card input:focus,
+    .form-card select:focus { border-color: #a3e635; }
 
     .form-card label {
       display: block;
@@ -399,6 +407,12 @@
       color: #64748b;
       margin-bottom: 6px;
       font-weight: 500;
+    }
+
+    .form-hint {
+      font-size: 11px;
+      color: #4b5563;
+      margin: -10px 0 14px;
     }
 
     .result-box {
@@ -530,16 +544,21 @@
 
         <div class="form-card">
           <h3>🏦 PIX Off-Ramp</h3>
+          <label>Payment confirmado on-chain</label>
+          <select id="paymentIdPix">
+            <option value="">Nenhum payment pago disponível</option>
+          </select>
+          <p class="form-hint">
+            Só payments com status "paid" aparecem aqui — confirme o pagamento
+            on-chain antes de converter para PIX.
+          </p>
           <label>Chave PIX</label>
           <input type="text" id="chavePix"
             placeholder="seu@email.com" />
-          <label>Valor USDC</label>
-          <input type="number" id="valorPix"
-            placeholder="98.50" step="0.01" />
           <label>Taxa de Câmbio (USDC/BRL)</label>
           <input type="number" id="taxaCambio"
             placeholder="5.20" step="0.01" />
-          <button class="btn-primary" onclick="criarPix()">
+          <button class="btn-primary" id="btnCriarPix" onclick="criarPix()" disabled>
             Converter para PIX
           </button>
           <div class="result-box" id="pixResult">
@@ -636,6 +655,7 @@ const API_URL = 'https://slippay-2-0.onrender.com';
         pagamentos.unshift(data);
         atualizarTabela();
         atualizarCards();
+        atualizarSeletorPix();
       }
 
     } catch (e) {
@@ -696,6 +716,7 @@ const API_URL = 'https://slippay-2-0.onrender.com';
       pagamentos.unshift(data);
       atualizarTabela();
       atualizarCards();
+      atualizarSeletorPix();
 
     } catch (e) {
       result.textContent = '✗ Erro: ' + e.message;
@@ -703,14 +724,21 @@ const API_URL = 'https://slippay-2-0.onrender.com';
     }
   }
 
+  /**
+   * IMPORTANTE: o backend agora só aceita off-ramp PIX para payments já
+   * confirmados on-chain (status "paid"). O payload não leva mais
+   * valor_usdc nem merchant_id — o servidor usa o valor já confirmado
+   * na base, para impedir que alguém force um off-ramp com valor
+   * inventado.
+   */
   async function criarPix() {
+    const paymentId = document.getElementById('paymentIdPix').value;
     const chave = document.getElementById('chavePix').value;
-    const valor = document.getElementById('valorPix').value;
     const cambio = document.getElementById('taxaCambio').value;
     const result = document.getElementById('pixResult');
 
-    if (!chave || !valor || !cambio) {
-      result.textContent = '⚠ Preencha todos os campos';
+    if (!paymentId || !chave || !cambio) {
+      result.textContent = '⚠ Selecione um payment pago e preencha os campos';
       result.className = 'result-box error';
       return;
     }
@@ -726,22 +754,38 @@ const API_URL = 'https://slippay-2-0.onrender.com';
           'X-Api-Key': apiKey
         },
         body: JSON.stringify({
-          payment_id: 'dashboard-' + Date.now(),
-          merchant_id: merchantId,
+          payment_id: paymentId,
           chave_pix: chave,
-          valor_usdc: parseFloat(valor),
           taxa_cambio: parseFloat(cambio)
         })
       });
 
       const data = await res.json();
       result.textContent = JSON.stringify(data, null, 2);
-      result.className = 'result-box success';
+      result.className = data.sucesso ? 'result-box success' : 'result-box error';
 
     } catch (e) {
       result.textContent = '✗ Erro: ' + e.message;
       result.className = 'result-box error';
     }
+  }
+
+  function atualizarSeletorPix() {
+    const select = document.getElementById('paymentIdPix');
+    const btn = document.getElementById('btnCriarPix');
+    const pagos = pagamentos.filter(p => p.status === 'paid');
+
+    if (pagos.length === 0) {
+      select.innerHTML = '<option value="">Nenhum payment pago disponível</option>';
+      btn.disabled = true;
+      return;
+    }
+
+    select.innerHTML = pagos.map(p => {
+      const idCurto = p.payment_id.substring(0, 18);
+      return `<option value="${p.payment_id}">${idCurto}... — USDC ${parseFloat(p.amount).toFixed(2)}</option>`;
+    }).join('');
+    btn.disabled = false;
   }
 
   function atualizarTabela() {
@@ -800,6 +844,7 @@ const API_URL = 'https://slippay-2-0.onrender.com';
   function carregarPagamentos() {
     atualizarTabela();
     atualizarCards();
+    atualizarSeletorPix();
   }
 </script>
 

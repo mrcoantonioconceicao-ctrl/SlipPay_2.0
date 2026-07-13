@@ -1,6 +1,6 @@
 /**
  * SlipPay SDK - Gateway de pagamento USDC para e-commerce brasileiro
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 class SlipPay {
@@ -115,10 +115,16 @@ class SlipPay {
 
   /**
    * Cria off-ramp PIX (USDC → BRL)
+   *
+   * IMPORTANTE: o payment referenciado por paymentId precisa já estar
+   * confirmado on-chain (status "paid") — o backend rejeita qualquer
+   * payment_id que não tenha passado por confirmarPagamento() antes.
+   * O valor em USDC é lido do payment confirmado no servidor, não é
+   * mais enviado pelo cliente.
+   *
    * @param {Object} options
-   * @param {string} options.paymentId - ID do payment
+   * @param {string} options.paymentId - ID do payment (já confirmado on-chain)
    * @param {string} options.chavePix - Chave PIX do merchant
-   * @param {number} options.valorUsdc - Valor em USDC
    * @param {number} options.taxaCambio - Taxa de câmbio USDC/BRL
    * @returns {Promise<Object>}
    */
@@ -132,9 +138,7 @@ class SlipPay {
         },
         body: JSON.stringify({
           payment_id: options.paymentId,
-          merchant_id: this.merchantId,
           chave_pix: options.chavePix,
-          valor_usdc: options.valorUsdc,
           taxa_cambio: options.taxaCambio,
         }),
       });

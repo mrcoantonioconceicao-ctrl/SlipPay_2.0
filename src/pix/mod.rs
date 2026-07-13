@@ -3,6 +3,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use std::env;
+use tracing::error;
 use uuid::Uuid;
 
 /// Status de um pedido de off-ramp PIX
@@ -56,6 +57,26 @@ pub struct ConfigVasp {
 pub enum ModoVasp {
     Simulado,
     Producao,
+}
+
+/// Payload enviado ao VASP parceiro
+#[derive(Debug, Serialize)]
+struct VaspOfframpRequest<'a> {
+    pedido_id: &'a str,
+    payment_id: &'a str,
+    merchant_id: &'a str,
+    chave_pix: &'a str,
+    valor_usdc: Decimal,
+    valor_brl_liquido: Decimal,
+}
+
+/// Resposta esperada do VASP parceiro
+#[derive(Debug, Deserialize)]
+struct VaspOfframpResponse {
+    tx_id: String,
+    status: String,
+    #[serde(default)]
+    eta_segundos: Option<u32>,
 }
 
 /// Taxa do VASP parceiro: 0.5%
@@ -245,16 +266,89 @@ async fn enviar_simulado(pedido: &PedidoPix, tipo_chave: &str) -> ResultadoPix {
     }
 }
 
-/// Produção (placeholder)
+/// Produção: chamada HTTP real ao parceiro VASP
 async fn enviar_producao(pedido: &PedidoPix, config: &ConfigVasp) -> ResultadoPix {
-    ResultadoPix {
-        sucesso: false,
-        pedido_id: pedido.id.clone(),
-        valor_brl: dec!(0),
-        valor_liquido_brl: dec!(0),
-        mensagem: format!("VASP {} em produção — integração pendente", config.nome),
-        vasp_tx_id: None,
-        eta_segundos: None,
+    let payload = VaspOfframpRequest {
+        pedido_id: &pedido.id,
+        payment_id: &pedido.payment_id,
+        merchant_id: &pedido.merchant_id,
+        chave_pix: &pedido.chave_pix,
+        valor_usdc: pedido.valor_usdc,
+        valor_brl_liquido: pedido.valor_liquido_brl,
+    };
+
+    let url = format!("{}/offramp", config.api_url.trim_end_matches('/'));
+
+    let client = reqwest::Client::new();
+
+    let resposta = client
+        .post(&url)
+        .bearer_auth(&config.api_key)
+        .json(&payload)
+        .send()
+        .await;
+
+    match resposta {
+        Ok(resp) => {
+            let status_code = resp.status();
+
+            if !status_code.is_success() {
+                let corpo_erro = resp.text().await.unwrap_or_default();
+                error!(
+                    "VASP {} retornou erro HTTP {}: {}",
+                    config.nome, status_code, corpo_erro
+                );
+                return ResultadoPix {
+                    sucesso: false,
+                    pedido_id: pedido.id.clone(),
+                    valor_brl: dec!(0),
+                    valor_liquido_brl: dec!(0),
+                    mensagem: format!("VASP {} recusou o pedido (HTTP {})", config.nome, status_code),
+                    vasp_tx_id: None,
+                    eta_segundos: None,
+                };
+            }
+
+            match resp.json::<VaspOfframpResponse>().await {
+                Ok(body) => {
+                    let sucesso = body.status == "completed" || body.status == "processing";
+
+                    ResultadoPix {
+                        sucesso,
+                        pedido_id: pedido.id.clone(),
+                        valor_brl: pedido.valor_brl,
+                        valor_liquido_brl: pedido.valor_liquido_brl,
+                        mensagem: format!("VASP {} — status: {}", config.nome, body.status),
+                        vasp_tx_id: Some(body.tx_id),
+                        eta_segundos: body.eta_segundos,
+                    }
+                }
+                Err(e) => {
+                    error!("Resposta inválida do VASP {}: {}", config.nome, e);
+                    ResultadoPix {
+                        sucesso: false,
+                        pedido_id: pedido.id.clone(),
+                        valor_brl: dec!(0),
+                        valor_liquido_brl: dec!(0),
+                        mensagem: format!("Resposta inválida do VASP {}", config.nome),
+                        vasp_tx_id: None,
+                        eta_segundos: None,
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!("Falha ao conectar no VASP {}: {}", config.nome, e);
+            ResultadoPix {
+                sucesso: false,
+                pedido_id: pedido.id.clone(),
+                valor_brl: dec!(0),
+                valor_liquido_brl: dec!(0),
+                mensagem: format!("Erro de conexão com VASP {}", config.nome),
+                vasp_tx_id: None,
+                eta_segundos: None,
+            }
+        }
     }
 }
 

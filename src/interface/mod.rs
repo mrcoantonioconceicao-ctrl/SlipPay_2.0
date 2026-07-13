@@ -49,12 +49,14 @@ pub struct ConfirmRequest {
     pub memo: String,
 }
 
+/// Requisição de off-ramp PIX.
+/// IMPORTANTE: valor_usdc NÃO vem do cliente — é lido do payment já
+/// confirmado on-chain (governance::buscar_payment). O cliente só
+/// informa a chave PIX de destino e a taxa de câmbio da cotação atual.
 #[derive(Deserialize)]
 pub struct PixRequest {
     pub payment_id: String,
-    pub merchant_id: String,
     pub chave_pix: String,
-    pub valor_usdc: Decimal,
     pub taxa_cambio: Decimal,
 }
 
@@ -300,16 +302,42 @@ async fn get_payment(
     }
 }
 
-async fn pix_offramp(headers: HeaderMap, Json(payload): Json<PixRequest>) -> impl IntoResponse {
+/// Off-ramp PIX. Só aceita payments já confirmados on-chain (status "paid").
+/// O valor_usdc usado é o valor CONFIRMADO em `governance`, nunca o que
+/// o cliente manda no payload — isso evita que alguém com a API key
+/// force um off-ramp com valor inventado.
+async fn pix_offramp(
+    headers: HeaderMap,
+    State(pool): State<AppState>,
+    Json(payload): Json<PixRequest>,
+) -> impl IntoResponse {
     if !autenticar(&headers) {
         return Json(erro_nao_autorizado().0);
     }
 
+    let payment = match governance::buscar_payment(&pool, &payload.payment_id).await {
+        Some(p) => p,
+        None => return Json(serde_json::json!({ "error": "payment_id inválido" })),
+    };
+
+    if payment.status != "paid" {
+        return Json(serde_json::json!({
+            "error": format!(
+                "payment {} ainda não confirmado on-chain (status atual: {})",
+                payment.payment_id, payment.status
+            )
+        }));
+    }
+
+    if payload.taxa_cambio <= Decimal::ZERO {
+        return Json(serde_json::json!({ "error": "taxa_cambio inválida" }));
+    }
+
     let pedido = pix::criar_pedido_pix(
-        &payload.payment_id,
-        &payload.merchant_id,
+        &payment.payment_id,
+        &payment.merchant_id,
         &payload.chave_pix,
-        payload.valor_usdc,
+        payment.amount, // valor confirmado on-chain, não o payload do cliente
         payload.taxa_cambio,
     );
 
@@ -323,6 +351,8 @@ async fn pix_offramp(headers: HeaderMap, Json(payload): Json<PixRequest>) -> imp
         "valor_brl": resultado.valor_brl,
         "valor_liquido_brl": resultado.valor_liquido_brl,
         "mensagem": resultado.mensagem,
+        "vasp_tx_id": resultado.vasp_tx_id,
+        "eta_segundos": resultado.eta_segundos,
     }))
 }
 
