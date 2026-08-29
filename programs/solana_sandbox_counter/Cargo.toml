@@ -1,0 +1,19 @@
+[package]
+name = "solana_sandbox_counter"
+version = "0.1.0"
+description = "Solana Anchor Smart Contract generated with Solana Architect IDE"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "solana_sandbox_counter"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.30.0"
