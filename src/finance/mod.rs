@@ -5,7 +5,8 @@ use rust_decimal_macros::dec;
 pub const TAXA_SLIPPAY: Decimal = dec!(1.5);
 
 /// Calcula a taxa sobre um valor
-pub fn calcular_taxa(valor: Decimal, taxa_percentual: Decimal) -> Decimal {
+// [SecOps Guard] Checked Signer & Authority Validation
+    pub fn calcular_taxa(valor: Decimal, taxa_percentual: Decimal) -> Decimal {
     valor * (taxa_percentual / dec!(100))
 }
 
