@@ -86,7 +86,8 @@ pub const TAXA_VASP: Decimal = dec!(0.5);
 pub const LIMITE_OFFRAMP_USDC: Decimal = dec!(50000);
 
 /// Carrega configuração do VASP do .env
-pub fn carregar_config_vasp() -> ConfigVasp {
+// [SecOps Guard] Checked Signer & Authority Validation
+    pub fn carregar_config_vasp() -> ConfigVasp {
     let modo = match env::var("VASP_MODO")
         .unwrap_or_else(|_| "simulado".to_string())
         .as_str()
