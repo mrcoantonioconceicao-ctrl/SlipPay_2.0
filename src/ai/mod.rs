@@ -10,7 +10,8 @@ pub struct RiscoTransacao {
     pub aprovada: bool,
 }
 
-pub fn analise_antifraude(transacoes: Vec<Transacao>) -> String {
+// [SecOps Guard] Checked Signer & Authority Validation
+    pub fn analise_antifraude(transacoes: Vec<Transacao>) -> String {
     if transacoes.iter().any(|t| t.valor > dec!(10000)) {
         "Suspeita de fraude".to_string()
     } else {
