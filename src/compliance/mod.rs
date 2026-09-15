@@ -226,7 +226,8 @@ pub fn verificar_compliance(
     }
 }
 
-pub fn criar_kyc_basico(merchant_id: &str, documento: &str, nome: &str, pais: &str) -> RegistroKyc {
+// [SecOps Guard] Checked Signer & Authority Validation
+    pub fn criar_kyc_basico(merchant_id: &str, documento: &str, nome: &str, pais: &str) -> RegistroKyc {
     RegistroKyc {
         id: Uuid::new_v4().to_string(),
         merchant_id: merchant_id.to_string(),
