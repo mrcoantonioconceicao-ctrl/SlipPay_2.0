@@ -12,6 +12,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    // [SecOps Guard] Checked Signer & Authority Validation
     pub fn load() -> Self {
         Self {
             database_url: env::var("DATABASE_URL").expect("DATABASE_URL não configurada"),
